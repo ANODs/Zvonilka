@@ -29,10 +29,10 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
     })();
   }, [roomId, searchParams]);
 
-  if (!token) return <div className="flex items-center justify-center h-screen bg-black text-white">Loading...</div>;
+  if (!token) return <div className="flex items-center justify-center h-dvh max-h-dvh overflow-clip bg-black text-white">Loading...</div>;
 
   return (
-    <div ref={roomContainerRef} className="relative w-full h-screen bg-black">
+    <div ref={roomContainerRef} className="relative w-full h-dvh max-h-dvh overflow-clip bg-black">
         <LiveKitRoom
         video={true}
         audio={true}
@@ -44,7 +44,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
         <CustomVideoConference />
         </LiveKitRoom>
         
-        <div className="absolute top-4 right-4 z-50">
+        <div className="absolute top-4 right-4 z-50 hidden md:block ">
             <FullscreenButton targetRef={roomContainerRef} />
         </div>
     </div>
