@@ -21,6 +21,9 @@ export function CustomVideoConference() {
     { onlySubscribed: false }
   );
 
+  // Debugging logs
+  console.log('Tracks:', tracks);
+
   const [focusTrack, setFocusTrack] = useState<TrackReferenceOrPlaceholder | null>(null);
 
   const handlePin = (track: TrackReferenceOrPlaceholder) => {
@@ -52,9 +55,15 @@ export function CustomVideoConference() {
         ) : (
           // Grid View: Show all participants
           <div className="h-full p-2">
+            {tracks.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-white">
+                    Waiting for participants...
+                </div>
+            ) : (
              <GridLayout tracks={tracks}>
                 <ClickableParticipantTile onPin={handlePin} />
              </GridLayout>
+            )}
           </div>
         )}
       </div>
