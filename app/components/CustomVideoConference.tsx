@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  GridLayout,
   ParticipantTile,
   useTracks,
   ControlBar,
@@ -10,7 +9,7 @@ import {
 } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import { useState } from 'react';
-import { Maximize2, Minimize2, LayoutGrid } from 'lucide-react';
+import { Maximize2, LayoutGrid } from 'lucide-react';
 
 export function CustomVideoConference() {
   const tracks = useTracks(
@@ -20,9 +19,6 @@ export function CustomVideoConference() {
     ],
     { onlySubscribed: false }
   );
-
-  // Debugging logs
-  console.log('Tracks:', tracks);
 
   const [focusTrack, setFocusTrack] = useState<TrackReferenceOrPlaceholder | null>(null);
 
@@ -36,13 +32,13 @@ export function CustomVideoConference() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex-1 relative overflow-hidden">
+      <div className="flex-1 relative overflow-hidden bg-zinc-900">
         {focusTrack ? (
           // Focus View: Show only the pinned participant
           <div className="w-full h-full relative">
             <ParticipantTile
               trackRef={focusTrack}
-              className="w-full h-full"
+              className="w-full h-full object-contain"
             />
             <button
               onClick={handleUnpin}
@@ -53,17 +49,31 @@ export function CustomVideoConference() {
             </button>
           </div>
         ) : (
-          // Grid View: Show all participants
-          <div className="h-full p-2">
-            {tracks.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-white">
-                    Waiting for participants...
+          // Grid View: Show all participants manually to ensure control
+          <div className="h-full w-full p-2 overflow-y-auto">
+             {tracks.length === 0 ? (
+                 <div className="flex items-center justify-center h-full text-white">
+                     Waiting for participants...
+                 </div>
+             ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 h-full content-center">
+                    {tracks.map((track) => (
+                        <div 
+                            key={track.participant.identity + track.source} 
+                            className="relative aspect-video bg-black rounded-lg overflow-hidden group cursor-pointer border border-zinc-800"
+                            onClick={() => handlePin(track)}
+                        >
+                            <ParticipantTile trackRef={track} className="w-full h-full" />
+                            
+                            {/* Hover overlay */}
+                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors pointer-events-none" />
+                            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 p-1.5 rounded-full text-white backdrop-blur-sm">
+                                <Maximize2 size={16} />
+                            </div>
+                        </div>
+                    ))}
                 </div>
-            ) : (
-             <GridLayout tracks={tracks}>
-                <ClickableParticipantTile onPin={handlePin} />
-             </GridLayout>
-            )}
+             )}
           </div>
         )}
       </div>
@@ -73,30 +83,4 @@ export function CustomVideoConference() {
       <RoomAudioRenderer />
     </div>
   );
-}
-
-// Wrapper to add click-to-pin functionality
-function ClickableParticipantTile({ 
-  trackRef, 
-  onPin, 
-  ...props 
-}: { 
-  trackRef?: TrackReferenceOrPlaceholder; 
-  onPin: (t: TrackReferenceOrPlaceholder) => void;
-  [key: string]: any;
-}) {
-    if (!trackRef) return null;
-
-    return (
-        <div className="relative w-full h-full group cursor-pointer" onClick={() => onPin(trackRef)}>
-            <ParticipantTile trackRef={trackRef} {...props} />
-            
-            {/* Hover overlay to indicate clickable */}
-            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors pointer-events-none" />
-            
-            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 p-1.5 rounded-full text-white backdrop-blur-sm">
-                <Maximize2 size={16} />
-            </div>
-        </div>
-    );
 }
