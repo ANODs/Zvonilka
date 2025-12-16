@@ -13,35 +13,111 @@ interface FullscreenButtonProps {
   className?: string;
 }
 
+// Extend types for vendor prefixes
+interface FsDocument extends Document {
+  mozFullScreenElement?: Element;
+  msFullscreenElement?: Element;
+  webkitFullscreenElement?: Element;
+  mozCancelFullScreen?: () => Promise<void>;
+  msExitFullscreen?: () => Promise<void>;
+  webkitExitFullscreen?: () => Promise<void>;
+}
+
+interface FsHTMLElement extends HTMLElement {
+  mozRequestFullScreen?: () => Promise<void>;
+  msRequestFullscreen?: () => Promise<void>;
+  webkitRequestFullscreen?: () => Promise<void>;
+}
+
 export const FullscreenButton: React.FC<FullscreenButtonProps> = ({ targetRef, className }) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isSupported, setIsSupported] = useState(true);
 
   useEffect(() => {
+    const doc = document as FsDocument;
+    
+    // Check if fullscreen is supported at all
+    const fullscreenEnabled = document.fullscreenEnabled || 
+                              (doc as any).webkitFullscreenEnabled || 
+                              (doc as any).mozFullScreenEnabled ||
+                              (doc as any).msFullscreenEnabled;
+    
+    setIsSupported(!!fullscreenEnabled);
+
     const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
+      const fullscreenEl = document.fullscreenElement || 
+                           doc.mozFullScreenElement || 
+                           doc.webkitFullscreenElement || 
+                           doc.msFullscreenElement;
+      setIsFullscreen(!!fullscreenEl);
     };
 
-    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    const events = [
+      'fullscreenchange', 
+      'webkitfullscreenchange', 
+      'mozfullscreenchange', 
+      'MSFullscreenChange'
+    ];
+
+    events.forEach(event => document.addEventListener(event, handleFullscreenChange));
     
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      events.forEach(event => document.removeEventListener(event, handleFullscreenChange));
+    };
   }, []);
 
   const toggleFullscreen = async () => {
+    const doc = document as FsDocument;
+    const element = (targetRef?.current || document.documentElement) as FsHTMLElement;
+
     try {
-      if (!document.fullscreenElement) {
+      const fullscreenEl = document.fullscreenElement || 
+                           doc.mozFullScreenElement || 
+                           doc.webkitFullscreenElement || 
+                           doc.msFullscreenElement;
+
+      if (!fullscreenEl) {
         // Enter fullscreen
-        const element = targetRef?.current || document.documentElement;
-        if (element) {
-            await element.requestFullscreen();
+        if (element.requestFullscreen) {
+          await element.requestFullscreen();
+        } else if (element.webkitRequestFullscreen) {
+          await element.webkitRequestFullscreen();
+        } else if (element.mozRequestFullScreen) {
+          await element.mozRequestFullScreen();
+        } else if (element.msRequestFullscreen) {
+          await element.msRequestFullscreen();
+        } else {
+            // iOS Safari workaround for video elements specifically, 
+            // but for generic divs it's not supported.
+            // If the user really wants to "maximize" on iOS, we might need a CSS fallback,
+            // but for now we just log it.
+            console.warn("Fullscreen API is not supported on this device/browser.");
         }
       } else {
         // Exit fullscreen
-        await document.exitFullscreen();
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if (doc.webkitExitFullscreen) {
+          await doc.webkitExitFullscreen();
+        } else if (doc.mozCancelFullScreen) {
+          await doc.mozCancelFullScreen();
+        } else if (doc.msExitFullscreen) {
+          await doc.msExitFullscreen();
+        }
       }
     } catch (err) {
       console.error("Error toggling fullscreen:", err);
     }
   };
+
+  if (!isSupported) {
+    // Optionally hide the button if not supported, 
+    // but often it's better to keep it and maybe it works via polyfills or just fails gracefully.
+    // For iOS we often want to hide it if we can't do anything.
+    // But let's keep it visible for now as 'isSupported' check might be tricky on some devices.
+    // Or we can return null to hide it.
+    // return null; 
+  }
 
   return (
     <button

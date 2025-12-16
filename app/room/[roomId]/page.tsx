@@ -2,12 +2,12 @@
 
 import {
   LiveKitRoom,
-  VideoConference,
 } from '@livekit/components-react';
 import '@livekit/components-styles';
 import { useEffect, useState, use, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { FullscreenButton } from '@/app/components/FullscreenButton';
+import { CustomVideoConference } from '@/app/components/CustomVideoConference';
 
 export default function RoomPage({ params }: { params: Promise<{ roomId: string }> }) {
   const { roomId } = use(params);
@@ -41,7 +41,7 @@ export default function RoomPage({ params }: { params: Promise<{ roomId: string 
         data-lk-theme="default"
         style={{ height: '100%' }}
         >
-        <VideoConference />
+        <CustomVideoConference />
         </LiveKitRoom>
         
         <div className="absolute top-4 right-4 z-50">
