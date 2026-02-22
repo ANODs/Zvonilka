@@ -209,21 +209,16 @@ export function CustomVideoConference() {
         <RoomAudioRenderer />
       </div>
 
-      {/* Responsive Chat Panel (Drawer on Mobile, Sidebar on Desktop) */}
+      {/* Chat Drawer (Persistent component so messages don't disappear) */}
       <div
         className={cn(
-          "transition-all duration-300 z-[100]",
-          // Mobile: Fixed overlay
-          "fixed inset-0 flex flex-col justify-end md:static md:inset-auto md:flex-row md:justify-start md:border-l md:border-zinc-800 md:z-auto",
-          chatOpen ? "opacity-100 pointer-events-auto md:w-[320px]" : "opacity-0 pointer-events-none md:w-0"
+          "fixed inset-0 z-[100] flex flex-col justify-end transition-all duration-300",
+          chatOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         )}
       >
-        {/* Mobile Backdrop */}
+        {/* Backdrop */}
         <div
-          className={cn(
-            "absolute inset-0 bg-black/80 backdrop-blur-sm md:hidden transition-opacity duration-300",
-            chatOpen ? "opacity-100" : "opacity-0"
-          )}
+          className="absolute inset-0 bg-black/80 backdrop-blur-sm"
           onClick={() => setChatOpen(false)}
         />
 
@@ -231,16 +226,15 @@ export function CustomVideoConference() {
         <div
           className={cn(
             "relative flex flex-col bg-zinc-900 transition-transform duration-300",
-            // Mobile: slide up from bottom, height 85vh
-            "rounded-t-2xl w-full h-[85vh] md:h-full md:rounded-none md:w-[320px]",
-            chatOpen ? "translate-y-0 md:translate-x-0" : "translate-y-full md:translate-y-0 md:translate-x-full"
+            "rounded-t-2xl w-full h-[85vh]",
+            chatOpen ? "translate-y-0" : "translate-y-full"
           )}
         >
-          {/* Mobile drag handle */}
-          <div className="w-12 h-1.5 bg-zinc-700 rounded-full mx-auto absolute top-3 left-1/2 -translate-x-1/2 md:hidden" />
+          {/* Drag handle */}
+          <div className="w-12 h-1.5 bg-zinc-700 rounded-full mx-auto absolute top-3 left-1/2 -translate-x-1/2" />
 
           {/* Chat Header */}
-          <div className="flex items-center justify-between p-4 pt-8 md:pt-4 border-b border-zinc-800 shrink-0 h-16 w-full z-10">
+          <div className="flex items-center justify-between p-4 pt-8 border-b border-zinc-800 shrink-0 h-16 w-full z-10">
             <div className="flex items-center gap-2 text-white font-medium">
               <MessageCircle size={20} />
               <h3>Chat</h3>
@@ -251,13 +245,13 @@ export function CustomVideoConference() {
           </div>
 
           <div className="flex-1 overflow-hidden relative">
-            {chatOpen && (
-              <div
-                className="absolute inset-0 [&>.lk-chat]:absolute [&>.lk-chat]:inset-0 [&>.lk-chat]:flex [&>.lk-chat]:flex-col [&>.lk-chat]:h-full [&>.lk-chat]:w-full [&>.lk-chat]:!max-w-none [&>.lk-chat]:!max-h-none [&>.lk-chat]:!m-0 [&>.lk-chat]:rounded-none [&>.lk-chat]:border-none [&>.lk-chat]:bg-zinc-900 [&_.lk-chat-header]:hidden"
-              >
-                <Chat />
-              </div>
-            )}
+            <div
+              className={cn(
+                "absolute inset-0 [&>.lk-chat]:absolute [&>.lk-chat]:inset-0 [&>.lk-chat]:flex [&>.lk-chat]:flex-col [&>.lk-chat]:h-full [&>.lk-chat]:w-full [&>.lk-chat]:!max-w-none [&>.lk-chat]:!max-h-none [&>.lk-chat]:!m-0 [&>.lk-chat]:rounded-none [&>.lk-chat]:border-none [&>.lk-chat]:bg-zinc-900 [&_.lk-chat-header]:hidden"
+              )}
+            >
+              <Chat />
+            </div>
           </div>
         </div>
       </div>

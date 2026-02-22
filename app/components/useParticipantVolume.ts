@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRoomContext } from '@livekit/components-react';
-import { RoomEvent, RemoteAudioTrack, RemoteParticipant, Track } from 'livekit-client';
+import { RoomEvent, RemoteAudioTrack, RemoteParticipant, Track, TrackEvent } from 'livekit-client';
 
 const VOL_PREFIX = 'zvonilka_vol_';
 
@@ -99,6 +99,11 @@ export function useParticipantVolume() {
       track.setVolume(0);
       const elements = track.attachedElements;
       elements.forEach(el => {
+        el.muted = true;
+      });
+
+      // Listen for elements attached *after* WebAudio is hooked (e.g. by RoomAudioRenderer later)
+      track.on(TrackEvent.ElementAttached, (el: HTMLMediaElement) => {
         el.muted = true;
       });
 
