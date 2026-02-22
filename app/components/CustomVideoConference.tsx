@@ -138,6 +138,11 @@ export function CustomVideoConference() {
               >
                 <MoreVertical size={20} />
               </button>
+
+              {/* Placed physically inside Focus View, though it uses Fixed positioning */}
+              {focusTrack.source === Track.Source.ScreenShare && (
+                <FloatingCameraTile presenterParticipant={focusTrack.participant} />
+              )}
             </div>
           ) : (
             // Grid View: Show all participants manually to ensure control
@@ -423,6 +428,120 @@ function ParticipantDrawer({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Special component for the floating presenter camera (PiP)
+function FloatingCameraTile({ presenterParticipant }: { presenterParticipant: any }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState({ x: 16, y: 80 }); // start slightly down
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStart = useRef({ x: 0, y: 0, startX: 0, startY: 0 });
+
+  // Wait until mounted to access window safely
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  if (!mounted || !presenterParticipant) return null;
+
+  // Find camera publication using standard Map or Array depending on LiveKit version fallback
+  const _pubs = presenterParticipant.videoTrackPublications;
+  const pubsArray = _pubs instanceof Map ? Array.from(_pubs.values()) : (_pubs || []);
+  const cameraPub = pubsArray.find((p: any) => p.source === Track.Source.Camera);
+
+  // Don't render if there's no camera track or it isn't subscribed/ready
+  if (!cameraPub || (!cameraPub.track && !cameraPub.isSubscribed)) return null;
+
+  const trackRef: TrackReferenceOrPlaceholder = {
+    participant: presenterParticipant,
+    publication: cameraPub,
+    source: Track.Source.Camera,
+  };
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    setIsDragging(true);
+    dragStart.current = {
+      x: e.clientX,
+      y: e.clientY,
+      startX: position.x,
+      startY: position.y,
+    };
+    if (containerRef.current) {
+      containerRef.current.setPointerCapture(e.pointerId);
+    }
+  };
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!isDragging) return;
+    const dx = e.clientX - dragStart.current.x;
+    const dy = e.clientY - dragStart.current.y;
+    setPosition({
+      x: dragStart.current.startX + dx,
+      y: dragStart.current.startY + dy,
+    });
+  };
+
+  const onPointerUp = (e: React.PointerEvent) => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    if (containerRef.current) {
+      try {
+        containerRef.current.releasePointerCapture(e.pointerId);
+      } catch (e) { /* Ignore rare capture lost error */ }
+    }
+
+    // Magnetic Corner Snapping
+    const padding = 16;
+    const { clientWidth, clientHeight } = document.documentElement;
+    // Dimensions of the PiP box roughly
+    const w = containerRef.current?.offsetWidth || 120;
+    const h = containerRef.current?.offsetHeight || 160;
+
+    let newX = position.x;
+    let newY = position.y;
+
+    const midX = clientWidth / 2;
+    const midY = clientHeight / 2;
+
+    // Constrain X
+    if (newX + (w / 2) < midX) {
+      newX = padding; // Snap Left
+    } else {
+      newX = clientWidth - w - padding; // Snap Right
+    }
+
+    // Constrain Y (leave ~100px padding at bottom for controls)
+    if (newY + (h / 2) < midY) {
+      newY = padding + 60; // Snap Top (slightly below headers)
+    } else {
+      newY = clientHeight - h - 120; // Snap Bottom (avoid controls)
+    }
+
+    setPosition({ x: newX, y: newY });
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
+      style={{
+        transform: `translate(${position.x}px, ${position.y}px)`,
+        touchAction: 'none'
+      }}
+      className={cn(
+        "fixed top-0 left-0 z-50 w-[100px] sm:w-[140px] aspect-[3/4] rounded-xl overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.5)] border-2 border-zinc-700/50 bg-black block",
+        isDragging ? "cursor-grabbing duration-0" : "cursor-grab transition-transform duration-300 ease-out"
+      )}
+    >
+      <ParticipantTile
+        trackRef={trackRef}
+        className="w-full h-full object-cover [&_video]:object-cover pointer-events-none"
+      />
     </div>
   );
 }
