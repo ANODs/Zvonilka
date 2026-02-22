@@ -46,15 +46,20 @@ export function useParticipantVolume() {
   const getStorageKey = (identity: string, source: Track.Source) => `${identity}_${source}`;
 
   const applyVolumeToTrack = useCallback((track: RemoteAudioTrack, identity: string, vol: number) => {
-    // 1. Try standard HTML volume first (works on desktop)
-    track.setVolume(vol);
-
     // 2. Apply WebAudio Gain override for iOS/mobile if available
     const trackId = track.sid || 'unknown_track';
     const gainNode = gainNodes.get(trackId);
-    if (gainNode && gainNode.context.state !== 'closed') {
-      // Ramp to new volume to avoid clicking sounds
-      gainNode.gain.setTargetAtTime(vol, gainNode.context.currentTime, 0.05);
+
+    if (gainNode) {
+      if (gainNode.context.state !== 'closed') {
+        // Ramp to new volume to avoid clicking sounds
+        gainNode.gain.setTargetAtTime(vol, gainNode.context.currentTime, 0.05);
+      }
+      // VERY IMPORTANT: Mute the native HTML element so we don't hear double audio!
+      track.setVolume(0);
+    } else {
+      // 1. Fallback to standard HTML volume 
+      track.setVolume(vol);
     }
   }, []);
 
@@ -90,7 +95,8 @@ export function useParticipantVolume() {
       gainNodes.set(trackId, gainNode);
 
       // IMPORTANT: Mute the original HTML element so we don't hear double audio.
-      // LiveKit handles attaching to HTMLAudioElements internally. We must find them and mute them.
+      // LiveKit handles attaching to HTMLAudioElements internally. We tell LiveKit to mute it.
+      track.setVolume(0);
       const elements = track.attachedElements;
       elements.forEach(el => {
         el.muted = true;
