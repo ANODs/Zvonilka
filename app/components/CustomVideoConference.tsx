@@ -209,27 +209,54 @@ export function CustomVideoConference() {
         <RoomAudioRenderer />
       </div>
 
-      {/* Slide-in Chat panel (Desktop) */}
-      <div className={cn(
-        "hidden md:flex flex-col border-l border-zinc-800 transition-all duration-300 relative",
-        chatOpen ? "w-[320px] opacity-100" : "w-0 opacity-0 overflow-hidden"
-      )}>
-        <div className="flex items-center justify-between p-4 border-b border-zinc-800 bg-zinc-900 absolute top-0 left-0 right-0 z-10 h-16">
-          <div className="flex items-center gap-2 text-white font-medium">
-            <MessageCircle size={20} />
-            <h3>Chat</h3>
-          </div>
-          <button onClick={() => setChatOpen(false)} className="text-zinc-400 hover:text-white p-2 rounded-lg hover:bg-zinc-800 transition-colors">
-            <X size={20} />
-          </button>
-        </div>
-        <div className="flex-1 mt-16 overflow-hidden">
-          {/* LiveKit Chat component goes here */}
-          {chatOpen && (
-            <div className="h-full w-full [&>.lk-chat]:h-full [&>.lk-chat]:w-full [&>.lk-chat]:max-h-none [&>.lk-chat]:rounded-none [&>.lk-chat]:border-none [&>.lk-chat]:bg-zinc-900">
-              <Chat />
-            </div>
+      {/* Responsive Chat Panel (Drawer on Mobile, Sidebar on Desktop) */}
+      <div
+        className={cn(
+          "transition-all duration-300 z-[100]",
+          // Mobile: Fixed overlay
+          "fixed inset-0 flex flex-col justify-end md:static md:inset-auto md:flex-row md:justify-start md:border-l md:border-zinc-800 md:z-auto",
+          chatOpen ? "opacity-100 pointer-events-auto md:w-[320px]" : "opacity-0 pointer-events-none md:w-0"
+        )}
+      >
+        {/* Mobile Backdrop */}
+        <div
+          className={cn(
+            "absolute inset-0 bg-black/80 backdrop-blur-sm md:hidden transition-opacity duration-300",
+            chatOpen ? "opacity-100" : "opacity-0"
           )}
+          onClick={() => setChatOpen(false)}
+        />
+
+        {/* Chat Container */}
+        <div
+          className={cn(
+            "relative flex flex-col bg-zinc-900 transition-transform duration-300",
+            // Mobile: slide up from bottom, height 85vh
+            "rounded-t-2xl w-full h-[85vh] md:h-full md:rounded-none md:w-[320px]",
+            chatOpen ? "translate-y-0 md:translate-x-0" : "translate-y-full md:translate-y-0 md:translate-x-full"
+          )}
+        >
+          {/* Mobile drag handle */}
+          <div className="w-12 h-1.5 bg-zinc-700 rounded-full mx-auto absolute top-3 left-1/2 -translate-x-1/2 md:hidden" />
+
+          {/* Chat Header */}
+          <div className="flex items-center justify-between p-4 pt-8 md:pt-4 border-b border-zinc-800 shrink-0 h-16 w-full z-10">
+            <div className="flex items-center gap-2 text-white font-medium">
+              <MessageCircle size={20} />
+              <h3>Chat</h3>
+            </div>
+            <button onClick={() => setChatOpen(false)} className="text-zinc-400 hover:text-white p-2 rounded-lg hover:bg-zinc-800 transition-colors">
+              <X size={20} />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-hidden relative">
+            {chatOpen && (
+              <div className="absolute inset-0 [&>.lk-chat]:h-full [&>.lk-chat]:w-full [&>.lk-chat]:max-h-none [&>.lk-chat]:rounded-none [&>.lk-chat]:border-none [&>.lk-chat]:bg-zinc-900">
+                <Chat />
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -238,10 +265,10 @@ export function CustomVideoConference() {
         participant={activeDrawerParticipant?.participant || null}
         isOpen={!!activeDrawerParticipant}
         onClose={() => setActiveDrawerParticipant(null)}
-        volume={activeDrawerParticipant ? (volumes[activeDrawerParticipant.participant.identity] ?? 1) : 1}
-        onVolumeChange={(val) => {
+        volumes={volumes}
+        onVolumeChange={(source, val) => {
           if (activeDrawerParticipant) {
-            setVolume(activeDrawerParticipant.participant.identity, val);
+            setVolume(activeDrawerParticipant.participant.identity, source, val);
           }
         }}
       />
@@ -294,16 +321,25 @@ function ParticipantDrawer({
   participant,
   isOpen,
   onClose,
-  volume,
+  volumes,
   onVolumeChange
 }: {
   participant: any,
   isOpen: boolean,
   onClose: () => void,
-  volume: number,
-  onVolumeChange: (val: number) => void
+  volumes: Record<string, number>,
+  onVolumeChange: (source: Track.Source, val: number) => void
 }) {
   if (!isOpen) return null;
+
+  const identity = participant?.identity;
+
+  // Find which audio tracks the participant actually has published
+  const hasMic = participant?.audioTrackPublications?.some((p: any) => p.source === Track.Source.Microphone);
+  const hasScreenAudio = participant?.audioTrackPublications?.some((p: any) => p.source === Track.Source.ScreenShareAudio);
+
+  const micVol = volumes[`${identity}_${Track.Source.Microphone}`] ?? 1;
+  const screenVol = volumes[`${identity}_${Track.Source.ScreenShareAudio}`] ?? 1;
 
   return (
     <div className="fixed inset-0 z-[100] flex flex-col justify-end">
@@ -334,26 +370,60 @@ function ParticipantDrawer({
 
         <div className="h-px bg-zinc-800 w-full" />
 
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center gap-2 text-zinc-200">
-            <Volume2 size={18} />
-            <span className="font-medium">User Volume</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <Volume2 size={16} className="text-zinc-500" />
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value={volume}
-              onChange={(e) => onVolumeChange(parseFloat(e.target.value))}
-              className="flex-1 accent-blue-500 h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
-            />
-            <span className="text-zinc-400 text-sm font-medium w-8 text-right">
-              {Math.round(volume * 100)}%
-            </span>
-          </div>
+        <div className="flex flex-col gap-6">
+          {hasMic && (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-2 text-zinc-200">
+                <Volume2 size={18} />
+                <span className="font-medium">Microphone Volume</span>
+              </div>
+              <div className="flex items-center gap-4">
+                <Volume2 size={16} className="text-zinc-500" />
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={micVol}
+                  onChange={(e) => onVolumeChange(Track.Source.Microphone, parseFloat(e.target.value))}
+                  className="flex-1 accent-blue-500 h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
+                />
+                <span className="text-zinc-400 text-sm font-medium w-8 text-right">
+                  {Math.round(micVol * 100)}%
+                </span>
+              </div>
+            </div>
+          )}
+
+          {hasScreenAudio && (
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-2 text-zinc-200">
+                <Volume2 size={18} />
+                <span className="font-medium">Screen Share Volume</span>
+              </div>
+              <div className="flex items-center gap-4">
+                <Volume2 size={16} className="text-zinc-500" />
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={screenVol}
+                  onChange={(e) => onVolumeChange(Track.Source.ScreenShareAudio, parseFloat(e.target.value))}
+                  className="flex-1 accent-blue-500 h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
+                />
+                <span className="text-zinc-400 text-sm font-medium w-8 text-right">
+                  {Math.round(screenVol * 100)}%
+                </span>
+              </div>
+            </div>
+          )}
+
+          {!hasMic && !hasScreenAudio && (
+            <div className="text-zinc-500 text-sm italic py-2">
+              No active audio streams.
+            </div>
+          )}
         </div>
       </div>
     </div>
