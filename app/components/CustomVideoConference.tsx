@@ -335,8 +335,9 @@ function ParticipantDrawer({
   const identity = participant?.identity;
 
   // Find which audio tracks the participant actually has published
-  const hasMic = participant?.audioTrackPublications?.some((p: any) => p.source === Track.Source.Microphone);
-  const hasScreenAudio = participant?.audioTrackPublications?.some((p: any) => p.source === Track.Source.ScreenShareAudio);
+  const publications = participant?.audioTrackPublications ? Array.from(participant.audioTrackPublications.values()) : [];
+  const hasMic = publications.some((p: any) => p.source === Track.Source.Microphone);
+  const hasScreenAudio = publications.some((p: any) => p.source === Track.Source.ScreenShareAudio);
 
   const micVol = volumes[`${identity}_${Track.Source.Microphone}`] ?? 1;
   const screenVol = volumes[`${identity}_${Track.Source.ScreenShareAudio}`] ?? 1;
