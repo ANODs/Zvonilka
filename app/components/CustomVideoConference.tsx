@@ -252,7 +252,9 @@ export function CustomVideoConference() {
 
           <div className="flex-1 overflow-hidden relative">
             {chatOpen && (
-              <div className="absolute inset-0 [&>.lk-chat]:h-full [&>.lk-chat]:w-full [&>.lk-chat]:max-h-none [&>.lk-chat]:rounded-none [&>.lk-chat]:border-none [&>.lk-chat]:bg-zinc-900">
+              <div
+                className="absolute inset-0 [&>.lk-chat]:absolute [&>.lk-chat]:inset-0 [&>.lk-chat]:flex [&>.lk-chat]:flex-col [&>.lk-chat]:h-full [&>.lk-chat]:w-full [&>.lk-chat]:!max-w-none [&>.lk-chat]:!max-h-none [&>.lk-chat]:!m-0 [&>.lk-chat]:rounded-none [&>.lk-chat]:border-none [&>.lk-chat]:bg-zinc-900 [&_.lk-chat-header]:hidden"
+              >
                 <Chat />
               </div>
             )}
