@@ -305,7 +305,7 @@ function FocusVideoTile({ trackRef }: { trackRef: TrackReferenceOrPlaceholder })
       {/* iOS/Mobile specific fullscreen button overlay */}
       <button
         onClick={handleIOSFullscreen}
-        className="absolute top-4 right-4 z-20 bg-black/50 p-2 rounded-full text-white backdrop-blur-sm hover:bg-black/70 md:hidden"
+        className="absolute top-4 right-16 z-20 bg-black/50 p-2 rounded-full text-white backdrop-blur-sm hover:bg-black/70 md:hidden flex items-center justify-center"
       >
         <Maximize2 size={24} />
       </button>
