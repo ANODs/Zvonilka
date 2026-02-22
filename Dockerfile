@@ -53,14 +53,15 @@ RUN chown nextjs:nodejs .next
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Pass build args to runtime env if provided during build
 ARG NEXT_PUBLIC_LIVEKIT_URL
 ARG LIVEKIT_API_KEY
 ARG LIVEKIT_API_SECRET
+ARG TELEGRAM_BOT_TOKEN
 
 ENV NEXT_PUBLIC_LIVEKIT_URL=$NEXT_PUBLIC_LIVEKIT_URL
 ENV LIVEKIT_API_KEY=$LIVEKIT_API_KEY
 ENV LIVEKIT_API_SECRET=$LIVEKIT_API_SECRET
+ENV TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
 
 USER nextjs
 
@@ -68,4 +69,8 @@ EXPOSE 3000
 
 ENV PORT=3000
 
-CMD ["node", "server.js"]
+# Copy the bot script
+COPY --from=builder --chown=nextjs:nodejs /app/telegram-bot.js ./
+
+# Run both the Next.js standalone server AND the Telegram bot concurrently
+CMD ["npx", "concurrently", "\"node server.js\"", "\"node telegram-bot.js\""]
