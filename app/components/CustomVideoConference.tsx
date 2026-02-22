@@ -231,7 +231,7 @@ export function CustomVideoConference() {
         <div
           className={cn(
             "relative flex flex-col bg-black transition-transform duration-300",
-            "rounded-t-2xl w-full max-w-md mx-auto h-[85vh] border-x border-t border-zinc-800",
+            "rounded-t-2xl w-full max-w-2xl mx-auto h-[85vh] border-x border-t border-zinc-800",
             chatOpen ? "translate-y-0" : "translate-y-full"
           )}
         >
@@ -249,10 +249,14 @@ export function CustomVideoConference() {
             </button>
           </div>
 
-          <div className="flex-1 overflow-hidden relative">
+          <div className="flex-1 overflow-hidden flex flex-col min-w-0">
             <div
               className={cn(
-                "absolute inset-0 [&>.lk-chat]:absolute [&>.lk-chat]:inset-0 [&>.lk-chat]:flex [&>.lk-chat]:flex-col [&>.lk-chat]:h-full [&>.lk-chat]:w-full [&>.lk-chat]:!max-w-none [&>.lk-chat]:!max-h-none [&>.lk-chat]:!m-0 [&>.lk-chat]:rounded-none [&>.lk-chat]:border-none [&>.lk-chat]:bg-black [&_.lk-chat-header]:hidden [&_.lk-participant-name]:!block [&_.lk-participant-name]:text-xs [&_.lk-participant-name]:text-zinc-500 [&_.lk-participant-name]:mb-1"
+                "flex-1 flex flex-col h-full min-w-0",
+                "[&>.lk-chat]:flex-1 [&>.lk-chat]:w-full [&>.lk-chat]:min-w-0 [&>.lk-chat]:!max-w-none [&>.lk-chat]:!max-h-none [&>.lk-chat]:!m-0 [&>.lk-chat]:rounded-none [&>.lk-chat]:border-none [&>.lk-chat]:bg-black",
+                "[&_.lk-chat-header]:hidden",
+                "[&_.lk-participant-name]:!block [&_.lk-participant-name]:text-xs [&_.lk-participant-name]:text-zinc-500 [&_.lk-participant-name]:mb-1",
+                "[&_.lk-chat-messages]:min-w-0 [&_.lk-chat-form-input]:min-w-0 [&_.lk-chat-entry]:min-w-0"
               )}
             >
               <Chat />
