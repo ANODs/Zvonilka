@@ -63,6 +63,9 @@ ENV LIVEKIT_API_KEY=$LIVEKIT_API_KEY
 ENV LIVEKIT_API_SECRET=$LIVEKIT_API_SECRET
 ENV TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
 
+# Install bot dependencies that are not traced by Next.js standalone output
+RUN npm install telegraf dotenv concurrently
+
 USER nextjs
 
 EXPOSE 3000
