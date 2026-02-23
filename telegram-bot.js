@@ -41,7 +41,7 @@ bot.on('inline_query', async (ctx) => {
             },
             reply_markup: {
                 inline_keyboard: [[
-                    { text: 'Присоединиться 🎥', url: roomLink, style: 'positive' }
+                    { text: 'Присоединиться 🎥', url: roomLink, style: 'success' }
                 ]]
             }
         }

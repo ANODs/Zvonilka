@@ -17,9 +17,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const at = new AccessToken(apiKey, apiSecret, { identity: username });
-  // Grant permissions: can join, publish video/audio
-  at.addGrant({ roomJoin: true, room: room, canPublish: true, canSubscribe: true });
+  const at = new AccessToken(apiKey, apiSecret, { identity: username, name: username });
+  // Grant permissions: can join, publish video/audio, and update own metadata/name
+  at.addGrant({ roomJoin: true, room: room, canPublish: true, canSubscribe: true, canUpdateOwnMetadata: true });
 
   return NextResponse.json({ token: await at.toJwt() });
 }

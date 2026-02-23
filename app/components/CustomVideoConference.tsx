@@ -12,7 +12,7 @@ import {
 } from '@livekit/components-react';
 import { Track } from 'livekit-client';
 import { useState, useEffect, useRef } from 'react';
-import { Maximize2, LayoutGrid, Minimize2, Volume2, MoreVertical, MessageCircle, X, Activity } from 'lucide-react';
+import { Maximize2, LayoutGrid, Minimize2, Volume2, MoreVertical, MessageCircle, X, Activity, Pencil, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useParticipantVolume } from './useParticipantVolume';
 
@@ -335,6 +335,32 @@ function ParticipantDrawer({
   volumes: Record<string, number>,
   onVolumeChange: (source: Track.Source, val: number) => void
 }) {
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [newName, setNewName] = useState('');
+
+  useEffect(() => {
+    setNewName(participant?.name || participant?.identity || '');
+    setIsEditingName(false);
+  }, [participant]);
+
+  const handleSaveName = async () => {
+    if (!participant || !participant.isLocal || !newName.trim()) return;
+    try {
+      await participant.updateName(newName.trim());
+      setIsEditingName(false);
+    } catch (err) {
+      console.error("Failed to update name:", err);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') handleSaveName();
+    if (e.key === 'Escape') {
+      setIsEditingName(false);
+      setNewName(participant?.name || participant?.identity || '');
+    }
+  };
+
   if (!isOpen) return null;
 
   const identity = participant?.identity;
@@ -358,13 +384,45 @@ function ParticipantDrawer({
 
         <div className="flex items-start justify-between mt-2">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-xl font-bold text-white uppercase">
-              {participant?.identity?.charAt(0) || '?'}
+            <div className="w-12 h-12 bg-blue-600 rounded-full flex items-center justify-center text-xl font-bold text-white uppercase shrink-0">
+              {participant?.name?.charAt(0) || participant?.identity?.charAt(0) || '?'}
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-white">{participant?.identity || 'Unknown User'}</h2>
+              {isEditingName ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    autoFocus
+                    className="bg-zinc-800 text-white text-lg font-semibold rounded-md px-2 py-1 outline-none border border-zinc-600 focus:border-blue-500 w-[160px] sm:w-[200px]"
+                  />
+                  <button onClick={handleSaveName} className="p-1.5 text-green-500 hover:bg-zinc-800 rounded-md transition-colors shrink-0">
+                    <Check size={18} />
+                  </button>
+                  <button onClick={() => setIsEditingName(false)} className="p-1.5 text-red-500 hover:bg-zinc-800 rounded-md transition-colors shrink-0">
+                    <X size={18} />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl font-semibold text-white break-all">
+                    {participant?.name || participant?.identity || 'Unknown User'}
+                  </h2>
+                  {participant?.isLocal && (
+                    <button
+                      onClick={() => setIsEditingName(true)}
+                      className="p-1.5 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-md transition-colors shrink-0"
+                      title="Edit Name"
+                    >
+                      <Pencil size={16} />
+                    </button>
+                  )}
+                </div>
+              )}
               <div className="flex items-center gap-2 mt-1 text-sm text-zinc-400">
-                <Activity size={14} className="text-green-500" />
+                <Activity size={14} className="text-green-500 shrink-0" />
                 <span>Connected</span>
               </div>
             </div>
