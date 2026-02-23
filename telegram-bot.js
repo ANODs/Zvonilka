@@ -21,6 +21,14 @@ bot.on('inline_query', async (ctx) => {
 
     const roomLink = `${appUrl}/room/${query}`;
 
+    // Escape HTML special characters to prevent Telegram parse errors
+    const escapeHTML = (text) => text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    const escapedQuery = escapeHTML(query);
+
     const results = [
         {
             type: 'article',
@@ -28,8 +36,8 @@ bot.on('inline_query', async (ctx) => {
             title: 'Поделиться ссылкой на комнату',
             description: `Комната: ${query}`,
             input_message_content: {
-                message_text: `📞 Приглашаю вас присоединиться к комнате **${query}**!`,
-                parse_mode: 'Markdown'
+                message_text: `📞 Приглашаю вас присоединиться к комнате <b>${escapedQuery}</b>!`,
+                parse_mode: 'HTML'
             },
             ...Markup.inlineKeyboard([
                 Markup.button.url('Присоединиться 🎥', roomLink)
@@ -39,6 +47,21 @@ bot.on('inline_query', async (ctx) => {
 
     return await ctx.answerInlineQuery(results);
 });
+
+// Start and Help commands for private messages
+const startMessage = `
+Привет! 👋 Я бот для быстрого создания приглашений в звонки.
+
+Я работаю в <b>инлайн-режиме</b>. Это значит, что вы можете использовать меня прямо в любом чате или группе!
+
+<b>Как пользоваться:</b>
+1. Откройте любой чат, куда хотите скинуть ссылку.
+2. Напишите: <code>@StartNewCallBot 1234</code> (где 1234 — это любой код или название вашей комнаты).
+3. Над полем ввода появится окно с кнопкой, нажмите на него — и в чат улетит красивая кнопка-приглашение! 🎥
+`;
+
+bot.start((ctx) => ctx.replyWithHTML(startMessage));
+bot.help((ctx) => ctx.replyWithHTML(startMessage));
 
 // Launch bot
 bot.launch().then(() => {
