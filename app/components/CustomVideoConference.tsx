@@ -4,7 +4,6 @@ import {
   ParticipantTile,
   useTracks,
   ControlBar,
-  RoomAudioRenderer,
   TrackReferenceOrPlaceholder,
   useParticipantTile,
   VideoTrack,
@@ -211,7 +210,6 @@ export function CustomVideoConference() {
         </div>
 
         {/* Volume Context Menu (Replaced by Drawer logic later) */}
-        <RoomAudioRenderer />
       </div>
 
       {/* Chat Drawer (Persistent component so messages don't disappear) */}
@@ -231,7 +229,7 @@ export function CustomVideoConference() {
         <div
           className={cn(
             "relative flex flex-col bg-black transition-transform duration-300",
-            "rounded-t-2xl w-full max-w-2xl mx-auto h-[85vh] border-x border-t border-zinc-800",
+            "rounded-t-2xl mx-auto h-[85vh] border-x border-t border-zinc-800",
             chatOpen ? "translate-y-0" : "translate-y-full"
           )}
         >

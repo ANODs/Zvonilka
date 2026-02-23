@@ -9,7 +9,7 @@ if (!botToken) {
 }
 
 const bot = new Telegraf(botToken);
-const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://zvonilka.pton.app'; // Fallback base URL for the join button
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://hostfi.app'; // Fallback base URL for the join button
 
 bot.on('inline_query', async (ctx) => {
     const query = ctx.inlineQuery.query.trim();
