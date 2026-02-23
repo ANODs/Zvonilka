@@ -39,9 +39,11 @@ bot.on('inline_query', async (ctx) => {
                 message_text: `📞 Приглашаю вас присоединиться к комнате <b>${escapedQuery}</b>!`,
                 parse_mode: 'HTML'
             },
-            ...Markup.inlineKeyboard([
-                Markup.button.url('Присоединиться 🎥', roomLink)
-            ])
+            reply_markup: {
+                inline_keyboard: [[
+                    { text: 'Присоединиться 🎥', url: roomLink, style: 'positive' }
+                ]]
+            }
         }
     ];
 
