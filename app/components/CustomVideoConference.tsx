@@ -276,53 +276,8 @@ export function CustomVideoConference() {
         }}
       />
 
-      {/* 
-        Custom Audio Renderer
-        Instead of LiveKit's RoomAudioRenderer which aggressively manages the muted state 
-        (causing double audio on iOS because it overrides our WebAudio muting logic), 
-        we use a bare-bones renderer. This is required for Android Chrome where WebAudio 
-        will output silence unless the track is natively attached to the DOM.
-      */}
-      <CustomAudioRenderer />
     </div>
   );
-}
-
-function CustomAudioRenderer() {
-  // Use all kinds of audio tracks
-  const tracks = useTracks(
-    [Track.Source.Microphone, Track.Source.ScreenShareAudio, Track.Source.Unknown],
-    { onlySubscribed: true }
-  ).filter((ref) => !ref.participant.isLocal);
-
-  return (
-    <div style={{ display: 'none' }}>
-      {tracks.map((trackRef) => (
-        <CustomAudioTrack key={`${trackRef.participant.identity}_${trackRef.source}`} trackRef={trackRef} />
-      ))}
-    </div>
-  );
-}
-
-function CustomAudioTrack({ trackRef }: { trackRef: TrackReferenceOrPlaceholder }) {
-  const audioEl = useRef<HTMLAudioElement>(null);
-
-  useEffect(() => {
-    // Attempt to extract the actual Track instance from publication
-    const track = trackRef.publication?.track;
-
-    if (audioEl.current && track) {
-      // Attaching to DOM allows browser to start downloading/decoding the media
-      track.attach(audioEl.current);
-      return () => {
-        if (audioEl.current) {
-          track.detach(audioEl.current);
-        }
-      };
-    }
-  }, [trackRef.publication?.track]);
-
-  return <audio ref={audioEl} autoPlay playsInline />;
 }
 
 // Special component to handle direct video element access for iOS Fullscreen
