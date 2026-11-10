@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#000000">
 <meta name="referrer" content="no-referrer">
 <!-- Странице можно только то, что ей нужно: свои файлы, скрипт Telegram и два брокера сигналинга. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; connect-src wss://broker.emqx.io:8084 wss://broker.hivemq.com:8884; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; connect-src wss://broker.emqx.io:8084 wss://broker.hivemq.com:8884 https://zvonilka-bot.timoshkin-timofey.workers.dev; object-src 'none'; base-uri 'none'">
 <link rel="icon" type="image/svg+xml" href="icon.svg">
 <link rel="icon" type="image/png" href="icon.png">
 <link rel="apple-touch-icon" href="icon.png">
@@ -20,6 +20,7 @@
 <main id="home" class="screen" hidden>
   <div class="aura"></div>
   <form class="panel" id="home-form" autocomplete="off">
+    <div class="duet" aria-hidden="true"><i></i><i></i></div>
     <h1>Звонилка</h1>
     <p class="lead">Видеозвонок по ссылке. Без установки, регистрации и серверов.</p>
     <input class="field" id="home-name" maxlength="40" placeholder="Ваше имя" autocapitalize="words" aria-label="Ваше имя">
@@ -29,6 +30,11 @@
       <button id="home-go" type="submit" aria-label="Войти"></button>
     </div>
     <p class="err" id="home-err" role="alert"></p>
+    <ul class="facts">
+      <li><b>Сразу в звонке</b>Кто открыл ссылку, тот уже вошёл</li>
+      <li><b>Напрямую</b>Звук и видео идут между вами, мимо серверов</li>
+      <li><b>Жестами</b>Щипок — приблизить, зажал человека — его громкость</li>
+    </ul>
   </form>
   <p class="foot">Связь идёт напрямую между участниками и зашифрована</p>
 </main>

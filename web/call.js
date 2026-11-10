@@ -6,9 +6,31 @@
 // кода комнаты, так что брокер видит только шум. Дальше каждая пара соединяется напрямую по
 // WebRTC. У соединения пять постоянных каналов — микрофон, камера, экран, звук экрана и канал
 // данных; включить камеру или показ экрана значит подменить дорожку, без пересогласования.
+//
+// Если в комнате есть медиа-узел (node/, docs/PLAN.md, этап 3), сетка становится звездой: те же
+// соединения с участниками строятся не напрямую, а через узел, и он пересылает между ними
+// медиа и сообщения.
 
 const BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
 const ICE_SERVERS = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
+// Запасной путь, когда напрямую не выходит: ретранслятор Cloudflare. Временные ключи к нему
+// выдаёт воркер бота (bot/worker.js); не ответил — работаем без ретранслятора, как раньше.
+const ICE_URL = 'https://zvonilka-bot.timoshkin-timofey.workers.dev/ice';
+let iceServers = ICE_SERVERS;
+
+async function loadIce() {
+  try {
+    const res = await fetch(ICE_URL, { signal: AbortSignal.timeout(4000) });
+    const data = await res.json();
+    const extra = [];
+    for (const s of Array.isArray(data.iceServers) ? data.iceServers : []) {
+      // Порт 53 браузеры не пускают: такие адреса только тянут время.
+      const urls = [].concat(s.urls || []).filter((u) => typeof u === 'string' && /^turns?:/.test(u) && !/:53(\?|$)/.test(u));
+      if (urls.length && s.username && s.credential) extra.push({ urls, username: s.username, credential: s.credential });
+    }
+    iceServers = [...ICE_SERVERS, ...extra];
+  } catch (_) { iceServers = ICE_SERVERS; }
+}
 const HELLO_BEATS = 4;            // напоминаем о себе раз в 20 секунд (удар — 5 секунд)
 const STORE = 'zvonilka.v1';
 export const MAX_PEERS = 7;       // восемь человек в комнате: в сетке каждый шлёт поток каждому
@@ -342,10 +364,12 @@ export const me = {
   talking: false,                          // микрофон включён только на время удержания
   audio: null, video: null, display: null, displayAudio: null,
   facing: 'user',
+  dev: '',                                 // 'телефон' или 'компьютер': чтобы различать два своих устройства
   camStream: new MediaStream(),            // микрофон и камера: одна группа для синхронности губ
   screenStream: new MediaStream(),         // экран и его звук
 };
 export const peers = new Map(); // id → участник
+let hub = null;                 // медиа-узел в комнате: { id, heard }; пока он есть, соединения идут через него
 let session = 0;                // растёт с каждым входом: по нему опоздавшие ответы узнают, что уже не нужны
 let tick = 0;
 
@@ -367,11 +391,13 @@ function peerFor(id, m) {
   }
   if (peers.size >= MAX_PEERS) return null;
   p = {
-    id, name: cleanName(m.name) || DEFAULT_NAME, hue: cleanHue(m.hue, id),
+    id, name: cleanName(m.name) || DEFAULT_NAME, hue: cleanHue(m.hue, id), dev: cleanName(m.dev).slice(0, 12),
+    diag: { local: new Set(), remote: new Set(), answered: false }, why: '',
     polite: me.id > id,               // звонит тот, у кого идентификатор меньше; вежливый уступает
     pc: null, dc: null, tx: null, cam: null, scr: null,
+    via: '',                          // идентификатор узла, через который построено соединение
     state: { mic: false, cam: false, screen: false },
-    status: 'new', ever: false, makingOffer: false, ignoreOffer: false,
+    status: 'new', ever: false, linked: false, makingOffer: false, ignoreOffer: false,
     cands: [], out: [], outTimer: 0, timer: 0, restarts: 0, started: 0, retryAt: 0,
     heard: Date.now(),
   };
@@ -382,34 +408,92 @@ function peerFor(id, m) {
 
 function onSignal(m) {
   if (!me.joined) return;
+  if (m.t === 'hello' && m.node) return onNode(m); // узел — не человек: плитки у него нет
+  if (hub && m.f === hub.id) return onHub(m);
   if (m.t === 'bye') { const p = peers.get(m.f); if (p) dropPeer(p, 'left'); return; }
   if (m.t === 'full') { if (!peers.size) emit('notice', { type: 'full' }); return; }
   const p = peerFor(m.f, m);
   if (!p) { if (m.t === 'hello') sig.send({ t: 'full', to: m.f }); return; }
   p.heard = Date.now();
   if (m.t === 'hello') onHello(p, m);
+  else if (hub) return; // со звездой описания и кандидаты ходят только через узел
   else if (m.t === 'desc') onDesc(p, m.d);
   else if (m.t === 'cand') onCands(p, m.c);
   else if (m.t === 'restart') { if (p.pc && !p.polite) { try { p.pc.restartIce(); } catch (_) {} } }
 }
 
-const helloMsg = (to) => ({ t: 'hello', name: me.name, hue: me.hue, ...(to ? { to } : {}) });
+// Узел объявил себя: hello с полем node. Из двух узлов все выбирают тот, чей идентификатор меньше.
+function onNode(m) {
+  if (hub && m.f === hub.id) { hub.heard = Date.now(); return; }
+  if (hub && hub.id < m.f) return;
+  hub = { id: m.f, heard: Date.now() };
+  reroute();
+}
+
+// Сообщения узла: ответы и кандидаты для соединения с участником peer; bye — узел ушёл.
+function onHub(m) {
+  hub.heard = Date.now();
+  if (m.t === 'bye') { hub = null; reroute(); return; }
+  const p = typeof m.peer === 'string' ? peers.get(m.peer) : null;
+  if (!p || p.via !== m.f) return;
+  if (m.t === 'desc') onDesc(p, m.d);
+  else if (m.t === 'cand') onCands(p, m.c);
+}
+
+// Соединение через узел оборвалось: возможно, узел пропал без прощания. На hello он отвечает
+// сразу; промолчал три секунды — звоним друг другу напрямую, не дожидаясь, пока его перестанет
+// быть слышно совсем.
+let hubProbe = 0;
+function probeHub() {
+  if (!hub || hubProbe) return;
+  const asked = Date.now();
+  sig.send(helloMsg());
+  hubProbe = setTimeout(() => {
+    hubProbe = 0;
+    if (hub && hub.heard < asked) { hub = null; reroute(); }
+  }, 3000);
+}
+
+// Сетка ↔ звезда: узел появился или пропал — каждое соединение строится заново, по новому пути.
+function reroute() {
+  clearTimeout(hubProbe);
+  hubProbe = 0;
+  for (const p of peers.values()) {
+    closePc(p);
+    if (p.status !== 'blocked') p.status = p.ever ? 'reconnecting' : 'new';
+    p.retryAt = 0;
+    p.restarts = 0;
+    if (hub || !p.polite) connect(p);
+    else sig.send(helloMsg(p.id)); // звонящий построит соединение, когда тоже узнает о перемене
+  }
+  changed();
+}
+
+const helloMsg = (to) => ({ t: 'hello', name: me.name, hue: me.hue, dev: me.dev, ...(to ? { to } : {}) });
 
 function onHello(p, m) {
   if (p.pc) return;
   if (p.status === 'blocked' && Date.now() < p.retryAt) return;
-  if (!p.polite) connect(p);
+  if (hub) {
+    // Со звездой каждый сам строит своё соединение до узла: оба должны знать друг о друге.
+    if (!m.to) sig.send(helloMsg(p.id));
+    connect(p);
+  } else if (!p.polite) connect(p);
   else if (!m.to) sig.send(helloMsg(p.id)); // чтобы звонящий точно о нас знал
 }
 
 function makePc(p) {
-  const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS, bundlePolicy: 'max-bundle' });
+  const pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' });
+  p.diag = { local: new Set(), remote: new Set(), answered: false };
+  p.why = '';
   p.pc = pc;
+  p.via = hub ? hub.id : '';
+  p.linked = false; // это соединение ещё ни разу не установилось
   p.status = 'connecting';
   p.started = Date.now();
   p.makingOffer = false;
   p.ignoreOffer = false;
-  pc.onicecandidate = (e) => { if (e.candidate && p.pc === pc) queueCand(p, e.candidate); };
+  pc.onicecandidate = (e) => { if (e.candidate && p.pc === pc) { p.diag.local.add(candKind(e.candidate.candidate)); queueCand(p, e.candidate); } };
   pc.onnegotiationneeded = () => { if (p.pc === pc) negotiate(p); };
   pc.onconnectionstatechange = () => { if (p.pc === pc) onConn(p); };
   // Канал данных одинаково объявлен с обеих сторон: открывается без своего рукопожатия.
@@ -427,9 +511,9 @@ function makePc(p) {
 
 // Пока соединение не установилось: повторяем offer, если ответа нет, и сдаёмся через 25 секунд.
 function watchdog(p, pc) {
-  if (p.pc !== pc || p.status === 'connected' || p.ever) return;
+  if (p.pc !== pc || p.status === 'connected' || p.linked) return;
   if (Date.now() - p.started > 25000) return blocked(p);
-  if (!p.polite && pc.signalingState === 'have-local-offer' && pc.localDescription) sendDesc(p, pc.localDescription);
+  if ((p.via || !p.polite) && pc.signalingState === 'have-local-offer' && pc.localDescription) sendDesc(p, pc.localDescription);
   p.timer = setTimeout(() => watchdog(p, pc), 7000);
 }
 
@@ -495,6 +579,7 @@ async function onDesc(p, d) {
     if (p.ignoreOffer) return;
     await pc.setRemoteDescription(d);
     if (p.pc !== pc) return;
+    p.diag.answered = true;
     if (d.type === 'offer') {
       if (!p.tx) {
         const t = pc.getTransceivers();
@@ -533,8 +618,16 @@ function queueCand(p, c) {
   }, 40);
 }
 
+// Вид адреса из строки кандидата: host — свой в локальной сети (mdns — он же, но спрятан за
+// именем), srflx — внешний, relay — через ретранслятор.
+function candKind(line) {
+  const m = / typ (\w+)/.exec(String(line));
+  return m && m[1] === 'host' && /\.local /.test(line) ? 'mdns' : m ? m[1] : '';
+}
+
 function onCands(p, list) {
   if (!Array.isArray(list)) return;
+  for (const c of list.slice(0, 40)) if (c && typeof c.candidate === 'string') p.diag.remote.add(candKind(c.candidate));
   for (const c of list.slice(0, 40)) {
     if (!c || typeof c.candidate !== 'string') continue;
     if (p.pc && p.pc.remoteDescription) addCand(p, c);
@@ -548,8 +641,10 @@ async function addCand(p, c) {
 
 const live = (p) => !!p.pc && p.pc.connectionState === 'connected';
 
-// Пока соединение живо — по каналу данных, иначе — через брокеры.
+// Пока соединение живо — по каналу данных, иначе — через брокеры. Со звездой описания и
+// кандидаты всегда идут узлу: с пометкой, ради какого участника соединение.
 function sendTo(p, msg) {
+  if (p.via) return sig.send({ ...msg, to: p.via, peer: p.id });
   if (live(p) && p.dc && p.dc.readyState === 'open') {
     try { p.dc.send(JSON.stringify(msg)); return; } catch (_) {}
   }
@@ -562,6 +657,7 @@ function onConn(p) {
     const first = !p.ever;
     p.status = 'connected';
     p.ever = true;
+    p.linked = true;
     p.restarts = 0;
     clearTimeout(p.timer);
     sendState(p);
@@ -571,9 +667,11 @@ function onConn(p) {
   } else if (s === 'disconnected') {
     p.status = 'reconnecting';
     changed();
+    if (p.via) probeHub();
     clearTimeout(p.timer);
     p.timer = setTimeout(() => { if (p.pc && !live(p)) restart(p); }, 4000);
   } else if (s === 'failed') {
+    if (p.via) probeHub();
     if (!p.ever) blocked(p);
     else if (p.restarts < 3) restart(p);
     else dropPeer(p, 'lost');
@@ -585,7 +683,7 @@ function restart(p) {
   p.restarts++;
   p.status = 'reconnecting';
   changed();
-  if (!p.polite) { try { p.pc.restartIce(); } catch (_) {} }
+  if (p.via || !p.polite) { try { p.pc.restartIce(); } catch (_) {} }
   else sig.send({ t: 'restart', to: p.id });
   clearTimeout(p.timer);
   p.timer = setTimeout(() => {
@@ -596,6 +694,11 @@ function restart(p) {
 
 // Прямого пути нет: у обоих строгий NAT. Попробуем ещё раз позже, если участник не уйдёт.
 function blocked(p) {
+  // Почему не вышло: собеседник не ответил вовсе, или ответил, но путь между сетями не нашёлся.
+  const d = p.diag, has = (set, ...kinds) => kinds.some((k) => set.has(k));
+  p.why = !d.remote.size && !d.answered ? 'silent'
+    : has(d.local, 'relay') || has(d.remote, 'relay') ? 'relay-failed'
+    : !has(d.local, 'srflx', 'host') && !has(d.remote, 'srflx', 'host') ? 'hidden' : 'nat';
   closePc(p);
   p.status = 'blocked';
   p.retryAt = Date.now() + 45000;
@@ -612,6 +715,7 @@ function closePc(p, later) {
   p.cands = [];
   const pc = p.pc, dc = p.dc;
   p.pc = null;
+  p.via = '';
   p.dc = null;
   p.tx = null;
   p.cam = null;
@@ -645,16 +749,17 @@ function onChannel(p, data) {
     const name = cleanName(m.name);
     if (name) p.name = name;
     p.hue = cleanHue(m.hue, p.id);
+    p.dev = cleanName(m.dev).slice(0, 12);
     changed();
-  } else if (m.t === 'desc') onDesc(p, m.d);
-  else if (m.t === 'cand') onCands(p, m.c);
+  } else if (m.t === 'desc') { if (!p.via) onDesc(p, m.d); }
+  else if (m.t === 'cand') { if (!p.via) onCands(p, m.c); }
   else if (m.t === 'chat') { const text = String(m.text == null ? '' : m.text).slice(0, 2000); if (text) emit('chat', { peer: p, text }); }
   else if (m.t === 'bye') dropPeer(p, 'left');
 }
 
 function sendState(p) {
   if (!p.dc || p.dc.readyState !== 'open') return;
-  try { p.dc.send(JSON.stringify({ t: 'state', name: me.name, hue: me.hue, mic: me.mic, cam: me.cam, screen: me.screen })); } catch (_) {}
+  try { p.dc.send(JSON.stringify({ t: 'state', name: me.name, hue: me.hue, dev: me.dev, mic: me.mic, cam: me.cam, screen: me.screen })); } catch (_) {}
 }
 
 function broadcastState() {
@@ -931,6 +1036,7 @@ export async function join(room, name) {
   changed();
   startMedia();
   try {
+    await Promise.race([loadIce(), new Promise((r) => setTimeout(r, 1500))]); // ключи ретранслятора; долго не ждём
     await sig.start(room, onSignal, () => { if (me.joined) sig.send(helloMsg()); });
   } catch (e) {
     console.warn('Звонилка: вход', e);
@@ -944,6 +1050,7 @@ export async function join(room, name) {
     // Раз в пять секунд убираем тех, кто так и не появился; раз в двадцать напоминаем о себе.
     if (++beats % HELLO_BEATS === 0) sig.send(helloMsg());
     const now = Date.now();
+    if (hub && now - hub.heard > 45000) { hub = null; reroute(); } // узел пропал: снова напрямую
     for (const p of [...peers.values()]) if (!p.pc && now - p.heard > 45000) dropPeer(p, 'silent');
   }, 5000);
 }
@@ -960,6 +1067,9 @@ export function leave() {
   setTimeout(() => { if (mine === session) sig.stop(); }, 600); // даём прощанию уйти
   for (const p of [...peers.values()]) closePc(p, true);
   peers.clear();
+  hub = null;
+  clearTimeout(hubProbe);
+  hubProbe = 0;
   me.mic = me.cam = me.screen = me.talking = false;
   for (const kind of KINDS) setTrack(kind, null);
   emit('left');
@@ -971,7 +1081,7 @@ export function leave() {
 export async function stats() {
   const out = [];
   for (const p of peers.values()) {
-    const o = { id: p.id, name: p.name, status: p.status, state: p.state, dc: p.dc ? p.dc.readyState : 'none', path: '', rtt: 0, audio: 0, video: 0, screen: 0, sent: 0 };
+    const o = { id: p.id, name: p.name, status: p.status, state: p.state, dc: p.dc ? p.dc.readyState : 'none', via: p.via, why: p.why, local: [...p.diag.local].join(','), remote: [...p.diag.remote].join(','), relay: iceServers.length > 1, path: '', rtt: 0, audio: 0, video: 0, screen: 0, sent: 0 };
     if (p.pc && p.tx) {
       const mids = p.tx.map((t) => t.mid);
       const report = await p.pc.getStats();

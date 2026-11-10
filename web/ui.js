@@ -175,7 +175,7 @@ const ICONS = {
   camOff: '<path d="M10 6.500h2.500a3 3 0 0 1 3 3v1l5.500-3v9l-3.300-1.800M15.300 15.500a3 3 0 0 1-2.800 2H6a3 3 0 0 1-3-3v-5a3 3 0 0 1 2-2.800M4 4l16 16"/>',
   screen: '<rect x="3" y="4.500" width="18" height="12.500" rx="2.500"/><path d="M8.500 20.500h7M12 13.500v-5M9.500 10.800L12 8.300l2.500 2.500"/>',
   chat: '<path d="M12 4.500c4.700 0 8.500 3.100 8.500 7s-3.800 7-8.500 7c-1 0-2-.100-2.900-.400L5 20l.900-3.400c-1.500-1.300-2.400-3.100-2.400-5.100 0-3.900 3.800-7 8.500-7z"/>',
-  leave: '<path d="M3.200 14.300c4.900-4.700 12.700-4.700 17.600 0 .5.500.5 1.200 0 1.700l-1.500 1.500c-.4.400-1 .5-1.500.200l-2.300-1.300c-.4-.2-.6-.6-.6-1v-1.600c-1.900-.5-3.900-.5-5.800 0v1.600c0 .4-.2.8-.6 1l-2.300 1.300c-.5.300-1.100.200-1.500-.2l-1.500-1.500c-.5-.5-.5-1.200 0-1.700z" fill="currentColor" stroke="none"/>',
+  leave: '<path d="M12 9c-1.600 0-3.150.250-4.600.720v3.100c0 .390-.230.740-.560.900-.980.490-1.870 1.120-2.660 1.850-.180.180-.430.280-.700.280-.280 0-.530-.110-.710-.290L.290 13.080a.990.990 0 0 1 0-1.410C3.340 8.780 7.460 7 12 7s8.660 1.780 11.710 4.670a.990.990 0 0 1 0 1.410l-2.480 2.480c-.180.180-.430.290-.710.290-.270 0-.520-.110-.700-.280a11.300 11.300 0 0 0-2.670-1.850.990.990 0 0 1-.560-.900v-3.100C15.150 9.250 13.600 9 12 9z" fill="currentColor" stroke="none" transform="translate(0 .500)"/>',
   close: '<path d="M6.500 6.500l11 11M17.500 6.500l-11 11"/>',
   send: '<path d="M12 19V5.500M6 11.500l6-6 6 6"/>',
   go: '<path d="M5 12h13.500M13 6.500l5.500 5.500-5.500 5.500"/>',
@@ -229,6 +229,15 @@ function pumpHints() {
 
 const tiles = new Map(); // ключ → плитка: участник или его экран
 const NOTE = { new: 'Соединение…', connecting: 'Соединение…', reconnecting: 'Переподключение…', blocked: 'Нет прямого пути' };
+// Почему соединение не установилось — словами, а не вечным «Соединение…».
+const WHY = {
+  silent: 'Собеседник не отвечает',
+  nat: 'Сети не пропускают прямой путь',
+  hidden: 'Сети скрывают адреса устройств',
+  'relay-failed': 'Не вышло даже через ретранслятор',
+};
+// Два устройства одного человека называются одинаково — различаем их по виду устройства.
+const shownName = (p) => (p.dev && (p.name === me.name || [...peers.values()].some((q) => q !== p && q.name === p.name)) ? `${p.name} · ${p.dev}` : p.name);
 const initial = (name) => ([...String(name).trim()][0] || '?').toUpperCase();
 
 // Что сейчас должно быть на экране: по плитке на человека и на каждый чужой показ экрана.
@@ -238,7 +247,7 @@ function describe() {
   for (const p of peers.values()) {
     const on = p.status === 'connected';
     const sharing = on && p.state.screen && !!p.scr;
-    list.push({ key: p.id, kind: 'cam', peer: p, name: p.name, hue: p.hue, stream: p.cam, video: on && p.state.cam, muted: !p.state.mic, sharing, note: NOTE[p.status] || '' });
+    list.push({ key: p.id, kind: 'cam', peer: p, name: shownName(p), hue: p.hue, stream: p.cam, video: on && p.state.cam, muted: !p.state.mic, sharing, note: (p.status === 'blocked' && WHY[p.why]) || NOTE[p.status] || '' });
     if (sharing) list.push({ key: 's:' + p.id, kind: 'screen', peer: p, name: `${p.name} — экран`, hue: p.hue, stream: p.scr, video: true, muted: false, note: '' });
   }
   list.push({ key: 'me', kind: 'cam', self: true, name: 'Вы', hue: me.hue, stream: me.camStream, video: me.cam, muted: !me.mic, sharing: me.screen, note: '' });
@@ -1322,6 +1331,7 @@ function enter(room, created) {
   screensKey = '';
   wasMic = hadScreen = nudged = false;
   show('call');
+  me.dev = phone ? 'телефон' : 'компьютер';
   call.join(room, prefs.name || tgName);
   if (created && !tg) copyText(browserLink()).then((ok) => { if (ok && me.joined) toast('Ссылка на звонок скопирована — отправьте её, кому хотите'); });
   audio();
@@ -1391,7 +1401,7 @@ function wireCall() {
       setTimeout(() => hint('volume', coarse ? 'Зажмите человека и ведите вверх или вниз — это его громкость' : 'Колёсико над человеком меняет его громкость'), 2500);
     } else if (type === 'left') chime(false);
     else if (type === 'lost') { chime(false); toast(`${peer.name}: связь потеряна`); }
-    else if (type === 'blocked') toast(`Не получилось соединиться напрямую: ${peer.name}. Сети с обеих сторон этого не пропускают`);
+    else if (type === 'blocked') toast(`${peer.name}: ${(WHY[peer.why] || 'нет прямого пути').toLowerCase()}`);
     else if (type === 'full') toast('В звонке уже восемь человек — больше нельзя');
     else if (type === 'failed') toast('Не удалось начать звонок');
   });
