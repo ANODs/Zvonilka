@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Двое на связи: два светящихся шара — так в звонке выглядит человек без камеры. -->
+  <defs>
+    <radialGradient id="a" cx="34%" cy="28%" r="82%">
+      <stop offset="0" stop-color="#e2d4ff"/>
+      <stop offset=".46" stop-color="#8f5cf7"/>
+      <stop offset="1" stop-color="#3a1791"/>
+    </radialGradient>
+    <radialGradient id="b" cx="34%" cy="28%" r="82%">
+      <stop offset="0" stop-color="#d2f6ff"/>
+      <stop offset=".46" stop-color="#1fb4ee"/>
+      <stop offset="1" stop-color="#0a428a"/>
+    </radialGradient>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#6a5cff" stop-opacity=".6"/>
+      <stop offset="1" stop-color="#6a5cff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="#000"/>
+  <circle cx="256" cy="256" r="256" fill="url(#glow)"/>
+  <circle cx="198" cy="256" r="120" fill="url(#a)"/>
+  <circle cx="314" cy="256" r="120" fill="url(#b)" style="mix-blend-mode:screen"/>
+</svg>

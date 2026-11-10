@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-content">
+<title>Звонилка</title>
+<meta name="description" content="Видеозвонок по ссылке: без установки, регистрации и серверов.">
+<meta name="theme-color" content="#000000">
+<meta name="referrer" content="no-referrer">
+<!-- Странице можно только то, что ей нужно: свои файлы, скрипт Telegram и два брокера сигналинга. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; connect-src wss://broker.emqx.io:8084 wss://broker.hivemq.com:8884; object-src 'none'; base-uri 'none'">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="safe"></div>
+
+<main id="home" class="screen" hidden>
+  <div class="aura"></div>
+  <form class="panel" id="home-form" autocomplete="off">
+    <h1>Звонилка</h1>
+    <p class="lead">Видеозвонок по ссылке. Без установки, регистрации и серверов.</p>
+    <input class="field" id="home-name" maxlength="40" placeholder="Ваше имя" autocapitalize="words" aria-label="Ваше имя">
+    <button class="btn primary" id="new-call" type="button">Новый звонок</button>
+    <div class="join">
+      <input class="field" id="home-code" maxlength="300" placeholder="Код или ссылка" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="go" aria-label="Код или ссылка на звонок">
+      <button id="home-go" type="submit" aria-label="Войти"></button>
+    </div>
+    <p class="err" id="home-err" role="alert"></p>
+  </form>
+  <p class="foot">Связь идёт напрямую между участниками и зашифрована</p>
+</main>
+
+<main id="call" hidden>
+  <div id="stage"></div>
+
+  <div id="top">
+    <button class="glass" id="grid" type="button" aria-label="Показать всех" title="Показать всех" hidden></button>
+    <button class="glass" id="pill" type="button" aria-label="Позвать, имя и устройства"><span id="pill-text"></span></button>
+    <button id="sharing" type="button" aria-label="Остановить показ экрана" hidden><span>Вы показываете экран</span></button>
+  </div>
+
+  <section class="glass" id="invite" hidden>
+    <h2>Позовите кого-нибудь</h2>
+    <p>Кто откроет ссылку, сразу окажется в звонке.</p>
+    <span class="link" id="invite-link"></span>
+    <div class="row">
+      <button class="btn primary" id="invite-copy" type="button">Скопировать</button>
+      <button class="btn" id="invite-share" type="button">Поделиться</button>
+    </div>
+  </section>
+
+  <button id="hear" type="button" hidden>Включить звук</button>
+
+  <div id="hud" aria-hidden="true">
+    <div class="track glass"><i></i><span id="hud-icon"></span></div>
+    <b id="hud-value"></b>
+    <small id="hud-name"></small>
+  </div>
+
+  <section id="chat" aria-label="Сообщения">
+    <div id="chat-log" aria-live="polite"></div>
+    <form id="chat-form" autocomplete="off">
+      <input class="glass" id="chat-text" maxlength="2000" placeholder="Сообщение всем" enterkeyhint="send" aria-label="Сообщение всем">
+      <button id="chat-send" type="submit" aria-label="Отправить"></button>
+    </form>
+  </section>
+
+  <nav class="glass" id="bar" aria-label="Управление звонком"></nav>
+
+  <div id="sheet" hidden>
+    <div id="sheet-card" role="dialog" aria-label="Звонок">
+      <div id="sheet-grab"></div>
+      <header>
+        <h2>Звонок</h2>
+        <button id="sheet-close" type="button" aria-label="Закрыть"></button>
+      </header>
+      <span class="link" id="sheet-link"></span>
+      <div class="row">
+        <button class="btn primary" id="sheet-copy" type="button">Скопировать</button>
+        <button class="btn" id="sheet-share" type="button">Поделиться</button>
+      </div>
+      <label for="set-name">Ваше имя</label>
+      <input class="field" id="set-name" maxlength="40" placeholder="Гость" autocapitalize="words">
+      <label for="set-mic">Микрофон</label>
+      <select class="field" id="set-mic"></select>
+      <label for="set-cam">Камера</label>
+      <select class="field" id="set-cam"></select>
+      <div class="row">
+        <button class="btn" id="set-flip" type="button" hidden>Сменить камеру</button>
+        <button class="btn" id="set-full" type="button">На весь экран</button>
+      </div>
+      <details>
+        <summary>Жесты</summary>
+        <dl>
+          <dt class="for-touch">Коснуться человека</dt><dd class="for-touch">он крупно; ещё раз — во весь экран</dd>
+          <dt class="for-touch">Щипок, двойное касание</dt><dd class="for-touch">приблизить или показать кадр целиком</dd>
+          <dt class="for-touch">Зажать человека и вести вверх-вниз</dt><dd class="for-touch">его громкость</dd>
+          <dt class="for-touch">Смахнуть в сторону</dt><dd class="for-touch">следующий участник</dd>
+          <dt class="for-touch">Смахнуть вниз, свести пальцы</dt><dd class="for-touch">все сразу</dd>
+          <dt class="for-touch">Смахнуть вверх</dt><dd class="for-touch">написать сообщение</dd>
+          <dt class="for-touch">Удерживать микрофон</dt><dd class="for-touch">сказать пару слов, не включая его</dd>
+          <dt class="for-touch">Дважды коснуться себя</dt><dd class="for-touch">сменить камеру</dd>
+          <dt class="for-touch">Перетащить себя</dt><dd class="for-touch">в любой угол</dd>
+          <dt class="for-mouse">Щелчок по человеку</dt><dd class="for-mouse">он крупно; ещё раз — во весь экран</dd>
+          <dt class="for-mouse">Двойной щелчок, Ctrl или ⌘ + колёсико</dt><dd class="for-mouse">приблизить</dd>
+          <dt class="for-mouse">Колёсико над человеком</dt><dd class="for-mouse">его громкость</dd>
+          <dt class="for-mouse">← →</dt><dd class="for-mouse">следующий участник</dd>
+          <dt class="for-mouse">Esc</dt><dd class="for-mouse">все сразу</dd>
+          <dt class="for-mouse">Просто печатать</dt><dd class="for-mouse">написать сообщение</dd>
+          <dt class="for-mouse">Пробел</dt><dd class="for-mouse">микрофон; удерживать — сказать пару слов</dd>
+        </dl>
+      </details>
+      <p class="fine">Связь идёт напрямую между участниками и зашифрована: у звонка нет сервера, который мог бы его записать.</p>
+    </div>
+  </div>
+</main>
+
+<main id="left" class="screen" hidden>
+  <div class="aura"></div>
+  <div class="panel">
+    <h1>Вы вышли</h1>
+    <p class="lead">Звонок продолжается, пока в нём кто-то есть.</p>
+    <button class="btn primary" id="rejoin" type="button">Вернуться</button>
+    <button class="btn" id="left-new" type="button">Новый звонок</button>
+  </div>
+</main>
+
+<div id="toasts"></div>
+<script type="module" src="ui.js"></script>
+</body>
+</html>

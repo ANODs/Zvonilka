@@ -1,0 +1,64 @@
+name: Страница звонка
+
+# Публикует страницу звонка (web/) на GitHub Pages после каждого изменения в main, которое её
+# затрагивает, или вручную (Run workflow).
+# Один раз на GitHub: Settings → Pages → Build and deployment → Source: GitHub Actions.
+# Пока это не сделано, публикация пропускается с пояснением, а не падает.
+# Файлы страница подключает относительными путями, поэтому работает из подпапки /Zvonilka/.
+
+on:
+  push:
+    branches: [main]
+    paths: ['web/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Pages включён?
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.pages.outputs.enabled }}
+    steps:
+      - id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/pages")
+          case "$status" in
+            200)
+              echo "enabled=true" >> "$GITHUB_OUTPUT" ;;
+            404)
+              echo "::notice::GitHub Pages ещё не включён. Включите один раз: Settings → Pages → Build and deployment → Source: GitHub Actions — и запустите этот сценарий снова."
+              echo "enabled=false" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::warning::Не удалось проверить GitHub Pages (HTTP $status); публикуем как есть."
+              echo "enabled=true" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  deploy:
+    name: Публикация web/
+    needs: check
+    if: needs.check.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: web
+      - id: deployment
+        uses: actions/deploy-pages@v5

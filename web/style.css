@@ -1,0 +1,275 @@
+/* Звонилка — как звонок выглядит (docs/UX.md).
+   Чёрная сцена, на ней люди. Кнопок пять, и они из стекла. Цвет — это человек,
+   свечение — его голос. Всё, что меняется на экране, переезжает плавно, а не скачет. */
+
+*, *::before, *::after { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+:root {
+  color-scheme: dark;
+  --fg: #fff;
+  --dim: rgba(255, 255, 255, .6);
+  --faint: rgba(255, 255, 255, .36);
+  --glass: rgba(30, 30, 34, .56);
+  --line: rgba(255, 255, 255, .1);
+  --fill: rgba(255, 255, 255, .09);
+  --red: #ff453a;
+  --ease: cubic-bezier(.22, .9, .24, 1);
+  --spring: cubic-bezier(.34, 1.4, .64, 1);
+  /* Вырез экрана, полоса «домой» и — в Telegram на весь экран — его шапка. */
+  --safe-t: max(env(safe-area-inset-top, 0px), calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)));
+  --safe-b: max(env(safe-area-inset-bottom, 0px), var(--tg-safe-area-inset-bottom, 0px));
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+}
+
+html, body { height: 100%; margin: 0; background: #000; }
+body {
+  color: var(--fg);
+  font: 15px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  letter-spacing: -.005em;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+button, input, select { font: inherit; color: inherit; letter-spacing: inherit; }
+button { border: 0; padding: 0; background: none; cursor: pointer; touch-action: manipulation; }
+input, select { -webkit-user-select: text; user-select: text; }
+svg { width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+:focus-visible { outline: 2px solid rgba(255, 255, 255, .7); outline-offset: 2px; }
+
+.glass {
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(28px) saturate(1.8);
+  backdrop-filter: blur(28px) saturate(1.8);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* Невидимая мерка: по ней ui.js узнаёт отступы от выреза и краёв экрана. */
+#safe { position: fixed; left: 0; top: 0; visibility: hidden; pointer-events: none; padding: var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l); }
+
+/* ------------------------------------------------------------ главная и «вы вышли» */
+
+.screen { position: fixed; inset: 0; display: grid; place-items: center; padding: calc(24px + var(--safe-t)) 24px calc(56px + var(--safe-b)); overflow: hidden auto; }
+.aura {
+  position: absolute; left: 50%; top: 36%; width: min(130vmin, 900px); aspect-ratio: 1; translate: -50% -50%;
+  border-radius: 50%; pointer-events: none; filter: blur(48px);
+  background: radial-gradient(circle at 38% 36%, hsl(262 90% 62% / .5), hsl(205 95% 56% / .22) 42%, transparent 68%);
+  animation: drift 16s ease-in-out infinite alternate;
+}
+@keyframes drift { to { translate: -44% -56%; scale: 1.12; rotate: 24deg; } }
+
+.panel { position: relative; width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 12px; }
+.panel h1 { margin: 0; font-size: 46px; line-height: 1.02; font-weight: 650; letter-spacing: -.035em; }
+.panel .lead { margin: 2px 0 20px; color: var(--dim); font-size: 16px; line-height: 1.4; }
+.field { width: 100%; height: 54px; padding: 0 20px; border: 0; border-radius: 27px; background-color: var(--fill); outline: 0; font-size: 16px; transition: background-color .2s ease, box-shadow .2s ease; }
+.field::placeholder { color: var(--faint); }
+.field:focus { background-color: rgba(255, 255, 255, .13); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .28); }
+.btn { height: 54px; padding: 0 24px; border-radius: 27px; font-size: 16px; font-weight: 600; background: var(--fill); transition: scale .25s var(--spring), background .2s ease; }
+.btn:active { scale: .97; }
+.btn.primary { background: #fff; color: #000; }
+.join { position: relative; }
+.join .field { padding-right: 58px; }
+.join button { position: absolute; right: 6px; top: 6px; width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; background: rgba(255, 255, 255, .12); }
+.join svg { width: 20px; height: 20px; }
+.err { min-height: 20px; margin: 0 4px; color: #ff8a80; font-size: 14px; }
+.foot { position: absolute; left: 0; right: 0; bottom: calc(18px + var(--safe-b)); margin: 0; padding: 0 16px; text-align: center; color: var(--faint); font-size: 12.5px; }
+
+/* ------------------------------------------------------------ звонок: сцена и плитки */
+
+/* Высоту и сдвиг ставит ui.js по видимой части экрана: клавиатура телефона звонок не закрывает. */
+#call { position: fixed; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100%); overflow: hidden; background: #000; }
+#stage { position: absolute; inset: 0; overflow: hidden; touch-action: none; }
+
+/* Место и размер каждой плитки считает ui.js; здесь — только то, как она туда переезжает. */
+.tile {
+  --lvl: 0; /* громкость голоса от 0 до 1 */
+  position: absolute; left: 0; top: 0; overflow: hidden; cursor: pointer;
+  background: hsl(var(--hue, 220) 26% 8%);
+  box-shadow: 0 0 0 calc(var(--lvl) * 2.5px) hsl(var(--hue, 220) 100% 72% / calc(var(--lvl) * 2)), 0 0 calc(var(--lvl) * 64px) hsl(var(--hue, 220) 100% 62% / calc(var(--lvl) * .8));
+  transition: transform .55s var(--ease), width .55s var(--ease), height .55s var(--ease), border-radius .55s var(--ease), opacity .3s ease, scale .3s var(--ease), box-shadow .16s linear;
+  will-change: transform;
+}
+#stage.still .tile { transition: opacity .3s ease, scale .3s var(--ease), box-shadow .16s linear; }
+.tile.drag { transition: box-shadow .16s linear; z-index: 9 !important; }
+.tile.gone, .tile[data-role=hidden] { opacity: 0; scale: .88; pointer-events: none; }
+.tile[data-role=pip] { cursor: grab; box-shadow: 0 14px 44px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .09), 0 0 calc(var(--lvl) * 44px) hsl(var(--hue, 220) 100% 62% / calc(var(--lvl) * .9)); }
+/* Плитка во весь экран светится изнутри: её края и есть края экрана. */
+.tile[data-role=full]::after { content: ''; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 calc(var(--lvl) * 90px) hsl(var(--hue, 220) 100% 64% / calc(var(--lvl) * .6)); transition: box-shadow .16s linear; }
+
+.tile video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform-origin: 0 0; pointer-events: none; transition: opacity .35s ease; }
+.tile video.snap { transition: transform .3s var(--ease), opacity .35s ease; }
+.tile.mirror video { transform: scaleX(-1); transform-origin: 50% 50%; }
+.tile.no-video video { opacity: 0; }
+
+/* Камера выключена — вместо лица шар цвета человека; он «дышит» в такт голосу. */
+.orb { position: absolute; inset: 0; display: grid; place-items: center; opacity: 0; pointer-events: none; transition: opacity .35s ease; container-type: size; }
+.tile.no-video .orb { opacity: 1; }
+.orb i {
+  width: 96px; aspect-ratio: 1; border-radius: 50%; display: grid; place-items: center;
+  font-style: normal; font-size: 38px; font-weight: 500; color: #fff; text-shadow: 0 1px 12px rgba(0, 0, 0, .25);
+  background: radial-gradient(circle at 32% 26%, hsl(var(--hue, 220) 100% 84%), hsl(calc(var(--hue, 220) + 12) 92% 62%) 46%, hsl(calc(var(--hue, 220) + 30) 86% 36%) 100%);
+  box-shadow: 0 0 calc(28px + var(--lvl) * 110px) hsl(var(--hue, 220) 95% 62% / calc(.28 + var(--lvl) * .6));
+  scale: calc(1 + var(--lvl) * .16);
+  transition: scale .16s linear, box-shadow .16s linear;
+}
+@supports (width: 1cqmin) { .orb i { width: clamp(30px, 44cqmin, 168px); font-size: clamp(13px, 17cqmin, 64px); } }
+.tile.has-note .orb i { animation: breathe 1.8s ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: .5; scale: .94; } }
+
+.label { position: absolute; left: 12px; right: 12px; bottom: 10px; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; white-space: nowrap; pointer-events: none; text-shadow: 0 1px 10px rgba(0, 0, 0, .7), 0 0 2px rgba(0, 0, 0, .6); transition: opacity .3s ease; }
+.label svg { width: 15px; height: 15px; filter: drop-shadow(0 1px 4px rgba(0, 0, 0, .6)); }
+.label > svg { display: none; }
+.tile.muted .label > .mute, .tile.sharing .label > .share { display: block; }
+/* Крупный чужой экран подписью не закрываем: кто его показывает, видно по значку у имени. */
+.tile.screen[data-role=big] .label, .tile.screen[data-role=full] .label { display: none; }
+.label > span { overflow: hidden; text-overflow: ellipsis; transition: opacity .35s ease; }
+.label em { display: flex; align-items: center; gap: 3px; font-style: normal; font-size: 12px; color: rgba(255, 255, 255, .78); transition: opacity .35s ease; }
+.label em svg { width: 14px; height: 14px; }
+.tile[data-role=small] .label { left: 8px; right: 8px; bottom: 6px; font-size: 11.5px; }
+.tile[data-role=pip] .label > span { display: none; }
+.tile[data-role=full] .label { left: calc(16px + var(--safe-l)); top: calc(18px + var(--safe-t)); bottom: auto; right: 62%; }
+/* Двое или один: имя и так написано сверху по центру. */
+#stage:not([data-mode=present]) .tile[data-role=full] .label > span { display: none; }
+#call.idle .label > span, #call.idle .label em { opacity: 0; }
+.tile.zoomed .label { opacity: 0; }
+
+.note { position: absolute; left: 8px; right: 8px; bottom: 16%; text-align: center; font-size: 13px; color: var(--dim); opacity: 0; pointer-events: none; transition: opacity .3s ease; }
+.tile.has-note .note { opacity: 1; }
+.tile[data-role=small] .note, .tile[data-role=pip] .note { display: none; }
+
+/* ------------------------------------------------------------ звонок: строка сверху и панель кнопок */
+
+#top { position: absolute; left: 0; right: 0; top: calc(10px + var(--safe-t)); z-index: 20; display: flex; justify-content: center; align-items: center; gap: 8px; padding: 0 12px; pointer-events: none; transition: opacity .35s ease, translate .45s var(--ease); }
+#top > * { pointer-events: auto; }
+#pill, #sharing { height: 36px; min-width: 0; padding: 0 8px 0 14px; border-radius: 18px; display: flex; align-items: center; gap: 3px; font-size: 13.5px; font-weight: 500; }
+#pill span, #sharing span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#pill svg, #sharing svg { width: 18px; height: 18px; opacity: .55; }
+#sharing { background: #fff; color: #000; }
+#grid { width: 36px; height: 36px; flex: none; border-radius: 50%; display: grid; place-items: center; }
+#grid svg { width: 18px; height: 18px; }
+#call.idle #top { opacity: 0; translate: 0 -14px; }
+#call.idle #top > * { pointer-events: none; }
+
+#bar { position: absolute; left: 50%; bottom: calc(14px + var(--safe-b)); translate: -50% 0; z-index: 20; display: flex; gap: 8px; padding: 8px; border-radius: 36px; transition: opacity .35s ease, translate .45s var(--ease), scale .45s var(--ease); }
+#call.idle #bar { opacity: 0; translate: -50% 20px; scale: .94; pointer-events: none; }
+#call.idle { cursor: none; }
+#bar button { position: relative; width: 52px; height: 52px; flex: none; border-radius: 50%; display: grid; place-items: center; transition: background .2s ease, color .2s ease, scale .25s var(--spring), box-shadow .2s ease; }
+#bar button:active { scale: .9; }
+/* Выключенное заметнее включённого: белая кнопка — «вас не слышно» или «вас не видно». */
+#bar button.off, #bar button.on { background: #fff; color: #000; }
+#bar button[data-act=leave] { background: var(--red); }
+#bar button.talk { box-shadow: 0 0 0 2.5px hsl(var(--hue, 220) 100% 74%), 0 0 30px hsl(var(--hue, 220) 100% 62% / .8); }
+#bar button.unread::after { content: ''; position: absolute; right: 11px; top: 11px; width: 9px; height: 9px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2.5px rgb(34, 34, 38); }
+#bar button.nudge { animation: nudge .65s ease-in-out 4; }
+@keyframes nudge { 50% { scale: 1.16; box-shadow: 0 0 0 7px rgba(255, 255, 255, .25); } }
+@media (hover: hover) { #bar button:not(.off):not(.on):not([data-act=leave]):hover { background: rgba(255, 255, 255, .12); } }
+
+/* ------------------------------------------------------------ звонок: приглашение, сообщения, громкость */
+
+#invite { position: absolute; left: 50%; bottom: calc(96px + var(--safe-b)); translate: -50% 0; z-index: 12; width: min(360px, calc(100% - 28px)); padding: 20px; border-radius: 28px; text-align: center; animation: rise .5s var(--ease); }
+#invite h2 { margin: 0 0 4px; font-size: 19px; font-weight: 600; letter-spacing: -.015em; }
+#invite p { margin: 0 0 14px; color: var(--dim); font-size: 14px; }
+.link { display: block; padding: 12px 14px; margin-bottom: 10px; border-radius: 14px; background: rgba(255, 255, 255, .07); color: rgba(255, 255, 255, .86); font: 12.5px/1.3 ui-monospace, "SF Mono", Menlo, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-user-select: all; user-select: all; }
+.row { display: flex; gap: 8px; }
+.row .btn { flex: 1; min-width: 0; height: 48px; padding: 0 12px; border-radius: 24px; font-size: 15px; }
+
+#hear { position: absolute; left: 50%; top: 50%; translate: -50% -50%; z-index: 25; height: 54px; padding: 0 26px; border-radius: 27px; background: #fff; color: #000; font-size: 16px; font-weight: 600; box-shadow: 0 16px 50px rgba(0, 0, 0, .5); }
+
+/* Сообщения всплывают поверх видео и гаснут сами; открытый чат показывает их все. */
+#chat { position: absolute; left: calc(14px + var(--safe-l)); bottom: calc(94px + var(--safe-b) + var(--lift, 0px)); width: min(380px, calc(100% - 28px)); z-index: 18; display: flex; flex-direction: column; gap: 8px; pointer-events: none; transition: bottom .45s var(--ease); }
+#chat.open { pointer-events: auto; }
+#chat-log { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-height: min(46vh, 420px); overflow: hidden; }
+#chat.open #chat-log { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; padding-top: 32px; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 32px); mask-image: linear-gradient(to bottom, transparent 0, #000 32px); }
+#chat-log::-webkit-scrollbar { display: none; }
+.msg { flex: none; max-width: 100%; padding: 8px 13px; border-radius: 18px; font-size: 14.5px; line-height: 1.32; overflow-wrap: anywhere; white-space: pre-wrap; background: rgba(22, 22, 26, .62); -webkit-backdrop-filter: blur(22px) saturate(1.6); backdrop-filter: blur(22px) saturate(1.6); -webkit-user-select: text; user-select: text; animation: rise .4s var(--ease); }
+.msg b { margin-right: 7px; font-weight: 600; color: hsl(var(--hue, 220) 100% 80%); }
+#chat:not(.open) .msg:not(.fresh), #chat:not(.open) .msg:nth-last-child(n+5) { display: none; }
+#chat-form { display: none; gap: 8px; }
+#chat.open #chat-form { display: flex; animation: rise .35s var(--ease); }
+#chat-text { flex: 1; min-width: 0; height: 46px; padding: 0 18px; border: 0; border-radius: 23px; outline: 0; font-size: 16px; }
+#chat-text::placeholder { color: var(--dim); }
+#chat-send { width: 46px; height: 46px; flex: none; border-radius: 50%; display: grid; place-items: center; background: #fff; color: #000; }
+@keyframes rise { from { opacity: 0; translate: 0 10px; } }
+
+/* Громкость человека: полоска появляется прямо на нём, пока палец ведёт вверх или вниз. */
+#hud { position: absolute; z-index: 30; translate: -50% -50%; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; opacity: 0; scale: .9; transition: opacity .2s ease, scale .3s var(--spring); }
+#hud.on { opacity: 1; scale: 1; }
+#hud .track { position: relative; width: 56px; height: 172px; border-radius: 28px; overflow: hidden; }
+#hud .track i { position: absolute; left: 0; right: 0; bottom: 0; height: var(--v, 100%); background: #fff; transition: height .08s linear; }
+#hud-icon { position: absolute; left: 0; right: 0; bottom: 14px; display: grid; place-items: center; color: #fff; mix-blend-mode: difference; }
+#hud b { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; text-shadow: 0 1px 10px rgba(0, 0, 0, .7); }
+#hud small { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; color: rgba(255, 255, 255, .78); text-shadow: 0 1px 10px rgba(0, 0, 0, .7); }
+
+#toasts { position: fixed; left: 0; right: 0; top: calc(58px + var(--safe-t) + var(--vvt, 0px)); z-index: 60; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 0 12px; pointer-events: none; }
+.toast { max-width: 420px; padding: 10px 16px; border-radius: 20px; font-size: 14px; line-height: 1.35; text-align: center; pointer-events: auto; animation: drop .45s var(--ease); transition: opacity .3s ease, translate .3s ease; }
+.toast.out { opacity: 0; translate: 0 -8px; }
+.toast button { margin: 2px 0 2px 10px; padding: 5px 12px; border-radius: 14px; background: #fff; color: #000; font-size: 13px; font-weight: 600; }
+@keyframes drop { from { opacity: 0; translate: 0 -12px; scale: .96; } }
+
+/* ------------------------------------------------------------ звонок: лист «всё редкое» */
+
+#sheet { position: absolute; inset: 0; z-index: 40; display: grid; place-items: end center; background: rgba(0, 0, 0, .42); animation: fade .25s ease; }
+#sheet-card {
+  position: relative; width: min(440px, 100%); max-height: 88%; overflow: hidden auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: 10px; padding: 0 20px calc(22px + var(--safe-b)); border-radius: 30px 30px 0 0;
+  background: rgba(26, 26, 30, .86); -webkit-backdrop-filter: blur(40px) saturate(1.8); backdrop-filter: blur(40px) saturate(1.8);
+  box-shadow: inset 0 0 0 1px var(--line);
+  animation: sheet .45s var(--ease); transition: transform .3s var(--ease);
+}
+#sheet-card.drag { transition: none; }
+#sheet-grab { flex: none; height: 30px; margin-bottom: -10px; display: grid; place-items: center; touch-action: none; cursor: grab; }
+#sheet-grab::before { content: ''; width: 38px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, .26); }
+#sheet header { display: flex; align-items: center; justify-content: space-between; min-height: 34px; }
+#sheet h2 { margin: 0 4px; font-size: 21px; font-weight: 650; letter-spacing: -.02em; }
+#sheet-close { display: none; }
+#sheet .link { margin-bottom: 0; }
+#sheet label { display: block; margin: 6px 4px -4px; font-size: 12.5px; color: var(--dim); }
+#sheet select.field {
+  -webkit-appearance: none; appearance: none; padding-right: 46px; text-overflow: ellipsis;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff99' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7.5 10l4.5 4.500 4.500-4.500'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 16px center; background-size: 20px;
+}
+#sheet select.field:disabled { opacity: .5; }
+#sheet details { margin-top: 6px; padding: 0 18px; border-radius: 22px; background: rgba(255, 255, 255, .05); }
+#sheet summary { height: 52px; display: flex; align-items: center; justify-content: space-between; list-style: none; font-weight: 500; cursor: pointer; }
+#sheet summary::-webkit-details-marker { display: none; }
+#sheet summary::after { content: ''; width: 9px; height: 9px; margin-right: 4px; border: solid rgba(255, 255, 255, .55); border-width: 0 1.7px 1.7px 0; rotate: 45deg; translate: 0 -3px; transition: rotate .3s var(--ease), translate .3s var(--ease); }
+#sheet details[open] summary::after { rotate: 225deg; translate: 0 2px; }
+#sheet dl { margin: 0 0 16px; display: grid; grid-template-columns: minmax(0, 46%) 1fr; gap: 9px 14px; font-size: 13.5px; line-height: 1.3; }
+#sheet dt { font-weight: 500; }
+#sheet dd { margin: 0; color: var(--dim); }
+.for-touch { display: none; }
+body.touch .for-touch { display: block; }
+body.touch .for-mouse { display: none; }
+.fine { margin: 6px 4px 0; color: var(--faint); font-size: 12.5px; line-height: 1.4; }
+@keyframes fade { from { opacity: 0; } }
+@keyframes sheet { from { opacity: 0; translate: 0 40px; } }
+
+@media (min-width: 700px) {
+  #sheet { place-items: center; }
+  #sheet-card { padding: 22px 22px 24px; border-radius: 30px; }
+  #sheet-grab { display: none; }
+  #sheet-close { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: rgba(255, 255, 255, .1); }
+  #sheet-close svg { width: 18px; height: 18px; }
+}
+
+/* ------------------------------------------------------------ телефон */
+
+@media (max-width: 640px) {
+  .panel h1 { font-size: 40px; }
+  #chat { left: 10px; right: 10px; width: auto; }
+  /* Пишем сообщение — кнопки уступают место клавиатуре. */
+  #call.chat-open #bar { opacity: 0; translate: -50% 20px; pointer-events: none; }
+  #chat.open { bottom: calc(10px + var(--safe-b)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aura, .tile.has-note .orb i { animation: none; }
+  .tile { transition-duration: .01s; }
+}

@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Новая Звонилка — отдельная страница без сборки, правила Next.js к ней не относятся:
+    "web/**",
+    "tools/**",
+    "bot/**",
   ]),
 ]);
 

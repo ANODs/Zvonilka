@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Звонилка
 
-## Getting Started
+Видеозвонок по ссылке. Открыл страницу, нажал «Новый звонок», отправил ссылку — кто её открыл, сразу в звонке. Без установки, регистрации и своих серверов; в Telegram та же страница открывается как Mini App прямо в чате.
 
-First, run the development server:
+- **Напрямую.** Звук и видео идут между участниками по WebRTC, минуя серверы; шифрование сквозное по построению.
+- **Без сервера.** Страница — статические файлы на GitHub Pages. Участники находят друг друга через публичные MQTT-брокеры; сообщения запечатаны ключом из кода комнаты, брокер видит только шум.
+- **Пять кнопок.** Остальное — жестами, знакомыми по галерее и плееру: коснулся человека — он крупно, щипок — приблизить экран, зажал и повёл — его громкость, удержал микрофон — сказал пару слов, начал печатать — написал сообщение.
+
+До восьми человек в звонке; на телефонах удобно до пяти. Большие комнаты — задача медиа-узла на Zig (этап 3 плана).
+
+## Попробовать у себя
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+node tools/serve.mjs
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Откройте http://localhost:8080, нажмите «Новый звонок» и откройте скопированную ссылку во второй вкладке или в другом браузере на этом же компьютере. Ничего ставить не нужно: у страницы нет ни сборки, ни зависимостей. Телефону нужна опубликованная страница: камеру и микрофон браузер даёт только по https.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Как устроено
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+| Где | Что |
+|---|---|
+| `web/call.js` | Звонок без интерфейса: комната из ссылки, сигналинг, прямые соединения, микрофон, камера, экран |
+| `web/ui.js`, `web/style.css` | Интерфейс: плитки, раскладка, жесты, сообщения |
+| `bot/bot.mjs` | Бот Telegram: `@бот` в любом чате шлёт кнопку «Войти в звонок» |
+| `tools/call_test.mjs` | Живая проверка: три участника в headless Chrome через настоящие брокеры |
+| `docs/PLAN.md` | Как это работает и что дальше |
+| `docs/UX.md` | Как звонок выглядит и какими жестами управляется |
 
-## Learn More
+Комната — это строка в ссылке: `…/#<комната>` в браузере, `https://t.me/<бот>?startapp=<комната>` в Telegram. Из неё выводятся тема брокера и ключ шифрования, поэтому знать ссылку — значит быть приглашённым.
 
-To learn more about Next.js, take a look at the following resources:
+## Проверка
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+node tools/call_test.mjs
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Запускает три окна Chrome без интерфейса — компьютер, телефон и ещё один компьютер, — соединяет их в одном звонке и проверяет всё по очереди: связь каждого с каждым, микрофон, сообщения, показ экрана, жесты пальцами и мышью, выход и возвращение. С ключом `--shots <папка>` сохраняет снимки экранов.
 
-## Deploy on Vercel
+## Публикация
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Страницу публикует `.github/workflows/pages.yml` при каждом изменении `web/` в ветке `main`. Один раз нужно включить Pages: Settings → Pages → Build and deployment → Source: GitHub Actions.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Чтобы звонок открывался в Telegram, боту задаётся адрес страницы: BotFather → `/mybots` → бот → Bot Settings → Configure Mini App. После этого ссылка `https://t.me/<бот>?startapp=<комната>` открывает звонок прямо в чате.
+
+## Прежняя версия
+
+В корне лежит первая Звонилка — приложение на Next.js с сервером LiveKit (`app/`, `Dockerfile`, `telegram-bot.js`). Новой странице она не нужна и оставлена как есть.
