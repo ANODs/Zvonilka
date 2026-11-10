@@ -1,0 +1,11 @@
+.{
+    .name = .zvonilka_node,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.17.1",
+    .fingerprint = 0x6b4f07a166076d94,
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
