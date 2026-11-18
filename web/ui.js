@@ -335,7 +335,8 @@ function syncTiles(list) {
 function play(video) {
   if (!video.srcObject || !video.paused) return;
   const p = video.play();
-  if (p) p.catch((e) => { if (e && e.name === 'NotAllowedError' && !video.muted) $('hear').hidden = false; });
+  // Не дали играть со звуком (а не просто сменили поток) — просим коснуться страницы.
+  if (p) p.catch((e) => { if (e && e.name !== 'AbortError' && !video.muted && video.srcObject) $('hear').hidden = false; });
 }
 
 // ---------------------------------------------------------------- раскладка
@@ -702,6 +703,7 @@ function applyVol(t) {
   const v = getVol(t.d);
   if (canVolume) t.video.volume = v;
   t.video.muted = v === 0;
+  if (t.d.kind === 'cam' && t.d.peer) call.setVolume(t.d.peer, v); // через ретранслятор звук играет не видео
   t.badge.hidden = v === 1;
   t.badge.lastChild.textContent = v === 0 ? 'без звука' : Math.round(v * 100) + '%';
 }
@@ -1157,7 +1159,17 @@ function back() {
 // Голос виден светом: плитка говорящего светится его цветом, шар без камеры «дышит».
 let levelTimer = 0, loud = 0, nudged = false;
 
+// Сторож звука: раз в пару секунд проверить, что собеседников слышно. Видео на паузе —
+// запустить снова; браузер не даёт — показать «Включить звук».
+let guardBeat = 0;
+function guardSound() {
+  if (++guardBeat % 25) return;
+  for (const t of tiles.values()) if (!t.d.self && t.video.srcObject && t.video.paused) play(t.video);
+  if (call.audioLocked()) $('hear').hidden = false;
+}
+
 function levels() {
+  guardSound();
   const mine = micLevel();
   for (const t of tiles.values()) {
     if (t.d.kind !== 'cam') continue;
@@ -1489,6 +1501,7 @@ const WHAT = { mic: 'микрофон', cam: 'камера', both: 'камера
 
 function wireCall() {
   call.on('change', renderSoon);
+  call.on('audio-locked', () => { if (me.joined) $('hear').hidden = false; });
   call.on('left', afterLeave);
   call.on('track', (kind) => {
     if (kind === 'audio') attachMeter();
@@ -1584,7 +1597,7 @@ function wireUi() {
   $('sheet-copy').onclick = copyInvite;
   $('sheet-share').onclick = shareInvite;
   $('sheet-share').hidden = !tg && !navigator.share;
-  $('hear').onclick = () => { $('hear').hidden = true; audio(); for (const t of tiles.values()) play(t.video); };
+  $('hear').onclick = () => { $('hear').hidden = true; audio(); call.unlockAudio(); for (const t of tiles.values()) play(t.video); };
 
   $('chat-form').onsubmit = (e) => {
     e.preventDefault();

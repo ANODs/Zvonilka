@@ -745,6 +745,7 @@ function ensureRelay() {
     getTracks: () => ({ audio: outgoing('audio'), video: me.video }),
     onControl: (from, m) => { const p = peers.get(from); if (p && p.relay) { relayHeard(p); onChannel(p, JSON.stringify(m)); } },
     onMedia: (from) => { const p = peers.get(from); if (p && p.relay) relayHeard(p); },
+    onLocked: () => emit('audio-locked'),
   });
   return relay;
 }
@@ -859,6 +860,18 @@ export function sendChat(text) {
     else if (p.dc && p.dc.readyState === 'open') { try { p.dc.send(msg); } catch (_) {} }
   }
 }
+
+// Громкость человека, который идёт через ретранслятор: его звук играет не видеоэлемент.
+export function setVolume(p, v) {
+  if (p.relay && relay) relay.volume(p.id, v);
+}
+
+// Звук ретранслятора ждёт касания страницы; вызывать из обработчика касания.
+export function unlockAudio() {
+  return relay ? relay.unlock() : undefined;
+}
+
+export const audioLocked = () => !!relay && relay.locked();
 
 // Изменения доски (web/board.js): одному участнику или всем — тем же путём, что и чат.
 export function sendBoard(obj, to) {

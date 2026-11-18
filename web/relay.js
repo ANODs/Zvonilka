@@ -57,7 +57,7 @@ function resampler(from, to) {
   };
 }
 
-export function createRelay({ url, topic, aes, myId, getTracks, onControl, onMedia }) {
+export function createRelay({ url, topic, aes, myId, getTracks, onControl, onMedia, onLocked }) {
   const ad = te.encode(topic + '/relay');
   const me = idBytes(myId);
   const peers = new Map(); // id → { stream, canvas, decoder, codec, play, toCtx, level, frames, packets, keyAsked }
@@ -121,6 +121,7 @@ export function createRelay({ url, topic, aes, myId, getTracks, onControl, onMed
         let m;
         try { m = JSON.parse(td.decode(payload)); } catch (_) { return; }
         if (m && m.t === 'key') { forceKey = true; return; }
+        if (m && m.t === 'hi') { if (peers.has(from)) onMedia(from); return; } // перекличка: «я здесь»
         onControl(from, m);
         return;
       }
@@ -142,12 +143,17 @@ export function createRelay({ url, topic, aes, myId, getTracks, onControl, onMed
     if (!ctx) {
       ctx = new (window.AudioContext || window.webkitAudioContext)();
       ctx.ready = ctx.audioWorklet.addModule(new URL('./relay-audio.js', import.meta.url).href);
-      // Браузер включает звук только после касания страницы.
-      const wake = () => { if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {}); };
+      // Браузер включает звук только после касания страницы. Не дал — просим коснуться
+      // (кнопка «Включить звук»), иначе собеседника не слышно, хотя он вас слышит.
+      const wake = () => { if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {}); };
       addEventListener('pointerdown', wake, true);
       addEventListener('keydown', wake, true);
+      addEventListener('touchend', wake, true);
+      const c = ctx;
+      setTimeout(() => { if (ctx === c && c.state !== 'running' && peers.size && onLocked) onLocked(); }, 600);
+      c.onstatechange = () => { if (ctx === c && c.state !== 'running' && peers.size && onLocked) onLocked(); };
     }
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    if (ctx.state !== 'running') ctx.resume().catch(() => {});
     return ctx;
   }
 
@@ -335,15 +341,17 @@ export function createRelay({ url, topic, aes, myId, getTracks, onControl, onMed
     const tracks = [];
     if (canvas.captureStream) tracks.push(...canvas.captureStream(FPS).getVideoTracks());
     const p = { stream: null, canvas, decoder: null, codec: '', play: null, up: null, level: 0, frames: 0, packets: 0, keyAsked: 0 };
+    // Звук — прямо в динамик через звуковой движок, громкость — своим регулятором. Через
+    // видеоэлемент надёжнее не выходит: на iPhone такой звук порой молчит.
     const c = audioCtx();
-    const dest = c.createMediaStreamDestination();
-    tracks.unshift(...dest.stream.getAudioTracks());
+    p.gain = c.createGain();
+    p.gain.connect(c.destination);
     p.stream = new MediaStream(tracks);
     c.ready.then(() => {
       if (peers.get(id) !== p) return;
       p.play = new AudioWorkletNode(c, 'zv-play');
       p.up = resampler(RATE, c.sampleRate);
-      p.play.connect(dest);
+      p.play.connect(p.gain);
     }).catch((e) => console.warn('Звонилка: звук ретранслятора', e));
     peers.set(id, p);
     forceKey = true;
@@ -357,7 +365,7 @@ export function createRelay({ url, topic, aes, myId, getTracks, onControl, onMed
     if (!p) return;
     peers.delete(id);
     try { if (p.decoder && p.decoder.state !== 'closed') p.decoder.close(); } catch (_) {}
-    try { if (p.play) p.play.disconnect(); } catch (_) {}
+    try { if (p.play) p.play.disconnect(); p.gain.disconnect(); } catch (_) {}
     for (const t of p.stream.getTracks()) t.stop();
     if (!peers.size) { stopMic(); stopCam(); }
   }
@@ -372,6 +380,7 @@ export function createRelay({ url, topic, aes, myId, getTracks, onControl, onMed
 
   function close() {
     closed = true;
+    clearInterval(hiTimer);
     clearTimeout(retryTimer);
     for (const id of [...peers.keys()]) detach(id);
     stopMic();
@@ -381,10 +390,16 @@ export function createRelay({ url, topic, aes, myId, getTracks, onControl, onMed
     if (ctx) { ctx.close().catch(() => {}); ctx = null; }
   }
 
+  // Перекличка: тот, у кого нет ни микрофона, ни камеры, иначе молчал бы, и его сочли бы пропавшим.
+  const hiTimer = setInterval(() => { if (peers.size) control('', { t: 'hi' }); }, 4000);
+
   open();
   return {
     attach, detach, control, refresh, close,
     level: (id) => (peers.get(id) ? peers.get(id).level : 0),
+    volume: (id, v) => { const p = peers.get(id); if (p) p.gain.gain.value = v; },
+    locked: () => !!ctx && ctx.state !== 'running' && peers.size > 0,
+    unlock: () => { if (ctx && ctx.state !== 'running') return ctx.resume().catch(() => {}); },
     stats: (id) => { const p = peers.get(id); return p ? { audio: p.packets, video: p.frames } : { audio: 0, video: 0 }; },
     ready: () => !!ws && ws.readyState === WebSocket.OPEN,
   };

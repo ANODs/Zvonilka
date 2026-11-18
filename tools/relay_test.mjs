@@ -15,6 +15,8 @@ import { serve } from './serve.mjs';
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const at = process.argv.indexOf('--relay');
 const RELAY = at > 0 ? process.argv[at + 1] : 'http://127.0.0.1:8787';
+// --strict: звук без касания страницы запрещён, как в обычном телефоне.
+const STRICT = process.argv.includes('--strict');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
 const check = (name, pass, detail = '') => { results.push(!!pass); console.log(`${pass ? '✓' : '✗'} ${name}${detail ? ' — ' + detail : ''}`); };
@@ -33,7 +35,7 @@ const profile = await mkdtemp(join(tmpdir(), 'zvonilka-relay-'));
 const { server, port } = await serve(fileURLToPath(new URL('../web/', import.meta.url)));
 const chrome = spawn(CHROME, [
   '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
-  '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required',
+  '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', ...(STRICT ? [] : ['--autoplay-policy=no-user-gesture-required']),
   '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--no-first-run', '--mute-audio', 'about:blank',
 ], { stdio: 'ignore' });
 
@@ -63,13 +65,30 @@ try {
     return { name, sessionId, ev, room, go: (r) => send('Page.navigate', { url: `http://127.0.0.1:${port}/?name=${encodeURIComponent(name)}&relay=${encodeURIComponent(RELAY)}&relayforce#${r}` }, sessionId) };
   }
   const A = await page('Аня'), B = await page('Борис');
+  // Без микрофона браузер не даёт звук без касания (с микрофоном — даёт): так и проверяем блокировку.
+  if (STRICT) await send('Page.addScriptToEvaluateOnNewDocument', { source: "navigator.mediaDevices.getUserMedia = async () => { throw new DOMException('нет', 'NotAllowedError'); };" }, B.sessionId);
   const room = A.room;
   await A.go(room);
   await sleep(1500);
   await B.go(room);
-  const flows = (P) => until(async () => { const s = await P.ev('zvonilka.call.stats()'); return s.length === 1 && s[0].path === 'relay' && s[0].audio > 25 && s[0].video > 5 && s; }, 45000);
+  const flows = (P) => until(async () => { const s = await P.ev('zvonilka.call.stats()'); return s.length === 1 && s[0].path === 'relay' && (STRICT && P === A || s[0].audio > 25) && (STRICT && P === A || s[0].video > 5) && s; }, 45000);
   const [sa, sb] = [await flows(A), await flows(B)];
   check('через ретранслятор идут звук и видео в обе стороны', sa && sb, sa && sb ? `Аня получила ${sa[0].audio} кусков звука и ${sa[0].video} кадров, Борис — ${sb[0].audio} и ${sb[0].video}` : JSON.stringify(await A.ev('zvonilka.call.stats()')));
+  if (STRICT) {
+    // Без касания браузер не даёт играть звук: должна появиться кнопка, касание — включить.
+    // Тестовый Chrome иногда сам разрешает звук — тогда блокировку проверить нечем.
+    if ((await B.ev('new AudioContext().state')) === 'running') console.log('— браузер сам разрешил звук: проверку кнопки пропускаю');
+    else {
+    const shown = await until(() => B.ev('!document.getElementById("hear").hidden && zvonilka.call.audioLocked()'), 6000);
+    check('звук заблокирован — видна кнопка «Включить звук»', shown, shown ? '' : JSON.stringify(await B.ev('({ locked: zvonilka.call.audioLocked(), hear: document.getElementById("hear").hidden, ac: new AudioContext().state, act: navigator.userActivation && navigator.userActivation.hasBeenActive })')));
+    const [hx, hy] = await B.ev('(() => { const r = document.getElementById("hear").getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()');
+    for (const type of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type, x: hx, y: hy, button: 'left', clickCount: 1 }, B.sessionId);
+    check('касание кнопки — звук ретранслятора включился', await until(async () => !(await B.ev('zvonilka.call.audioLocked()')) && (await B.ev('document.getElementById("hear").hidden')), 4000));
+    }
+    // Слушатель без микрофона и камеры не пропадает: перекличка держит связь.
+    await sleep(24000);
+    check('слушатель без микрофона остаётся на связи дольше 20 секунд', (await A.ev('zvonilka.call.stats()'))[0]?.status === 'connected');
+  }
   check('имена дошли через ретранслятор', sa && sa[0].name === 'Борис' && sb && sb[0].name === 'Аня');
   const tile = await B.ev(`(() => { const t = [...zvonilka.tiles.values()].find((x) => !x.d.self); return t ? t.video.videoWidth + 'x' + t.video.videoHeight : ''; })()`);
   check('картинка собеседника видна на плитке', /^[1-9]\d*x[1-9]\d*$/.test(tile), tile);
