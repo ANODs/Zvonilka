@@ -275,6 +275,7 @@ body.touch .for-mouse { display: none; }
 #board canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
 #board canvas[data-tool=hand], #board canvas.grab { cursor: grab; }
 #board canvas[data-tool=text] { cursor: text; }
+#board canvas[data-tool=select] { cursor: default; }
 #board canvas[data-tool=eraser] { cursor: cell; }
 #call.board-open #bar, #call.board-open #top, #call.board-open #chat, #call.board-open #invite { display: none; }
 

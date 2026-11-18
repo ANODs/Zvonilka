@@ -92,7 +92,8 @@ export function createBoard({ root, send, myId, onToggle }) {
   const images = new Map();     // id → Image
   const view = { x: 0, y: 0, s: 1 }; // экран = (мир − x) · s
   let room = '', clock = 0, open = false, dirty = true, saveTimer = 0;
-  let tool = 'pen', color = COLORS[0], selected = null;
+  let tool = 'pen', color = COLORS[0];
+  const sel = new Set();         // выделенные предметы
   const undo = [], redo = [];
   const pts = new Map();        // активные касания
   let act = null;               // текущее действие
@@ -128,8 +129,17 @@ export function createBoard({ root, send, myId, onToggle }) {
     const next = { ...it, ts: ++clock, by: me };
     apply(next);
     send({ items: [next] });
-    if (history) { undo.push({ before: before || null, after: next }); redo.length = 0; }
+    if (history) { undo.push({ list: [{ before: before || null, after: next }] }); redo.length = 0; }
     return next;
+  }
+
+  // Несколько изменений разом (сдвинули выделенное, удалили, перекрасили) — одна отмена на всё.
+  function commitGroup(pairs) {
+    if (!pairs.length) return [];
+    const list = pairs.map(([it, before]) => ({ before: before || null, after: commit(it, before, false) }));
+    undo.push({ list });
+    redo.length = 0;
+    return list.map((x) => x.after);
   }
 
   function persist() {
@@ -226,9 +236,26 @@ export function createBoard({ root, send, myId, onToggle }) {
     return out;
   }
 
+  // Шлифовка кривой при отрисовке: дважды усредняем соседние точки (1-2-1), концы на месте.
+  // Одинаково и пока рисуешь, и после — поэтому в момент отпускания ничего не прыгает.
+  const polished = new WeakMap();
+  function polish(p) {
+    if (p.length < 8) return p;
+    let cached = polished.get(p);
+    if (cached && cached.n === p.length) return cached.q;
+    let q = p;
+    for (let pass = 0; pass < 2; pass++) {
+      const r = q.slice();
+      for (let i = 2; i < q.length - 2; i += 2) { r[i] = (q[i - 2] + 2 * q[i] + q[i + 2]) / 4; r[i + 1] = (q[i - 1] + 2 * q[i + 1] + q[i + 3]) / 4; }
+      q = r;
+    }
+    polished.set(p, { n: p.length, q });
+    return q;
+  }
+
   function drawItem(it) {
     if (it.k === 'stroke') {
-      const p = it.p;
+      const p = polish(it.p);
       g.strokeStyle = it.c;
       g.lineWidth = it.w;
       g.globalAlpha = it.m ? 0.45 : 1;
@@ -295,14 +322,32 @@ export function createBoard({ root, send, myId, onToggle }) {
     g.setTransform(dpr * view.s, 0, 0, dpr * view.s, -view.x * view.s * dpr, -view.y * view.s * dpr);
     for (const it of alive()) drawItem(it);
     if (act && act.kind === 'draw') drawItem(act.item);
-    const sel = selected && items.get(selected);
-    if (sel && !sel.del) {
-      const b = bounds(sel);
-      g.strokeStyle = '#6cb8ff';
-      g.lineWidth = 2 / view.s;
-      g.setLineDash([6 / view.s, 5 / view.s]);
-      g.strokeRect(b.x0 - 6 / view.s, b.y0 - 6 / view.s, b.x1 - b.x0 + 12 / view.s, b.y1 - b.y0 + 12 / view.s);
-      g.setLineDash([]);
+    // Выделение: рамка у каждого предмета, общая рамка и уголок, за который меняют размер.
+    const px = 1 / view.s;
+    g.strokeStyle = '#6cb8ff';
+    for (const it of selItems()) {
+      const b = bounds(it);
+      g.lineWidth = 1.5 * px;
+      g.setLineDash([5 * px, 4 * px]);
+      g.strokeRect(b.x0 - 4 * px, b.y0 - 4 * px, b.x1 - b.x0 + 8 * px, b.y1 - b.y0 + 8 * px);
+    }
+    g.setLineDash([]);
+    const box = selBox();
+    if (box && sel.size > 1) { g.lineWidth = 1.5 * px; g.strokeRect(box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0); }
+    if (box && tool === 'select') {
+      g.fillStyle = '#fff';
+      g.beginPath();
+      g.arc(box.x1, box.y1, 7 * px, 0, 7);
+      g.fill();
+      g.lineWidth = 2 * px;
+      g.stroke();
+    }
+    if (act && act.kind === 'frame') {
+      const x0 = Math.min(act.a.x, act.b.x), y0 = Math.min(act.a.y, act.b.y);
+      g.fillStyle = 'rgba(108,184,255,.12)';
+      g.fillRect(x0, y0, Math.abs(act.b.x - act.a.x), Math.abs(act.b.y - act.a.y));
+      g.lineWidth = 1 * px;
+      g.strokeRect(x0, y0, Math.abs(act.b.x - act.a.x), Math.abs(act.b.y - act.a.y));
     }
     root.classList.toggle('empty', !alive().length);
   }
@@ -335,7 +380,42 @@ export function createBoard({ root, send, myId, onToggle }) {
   function erase(it) {
     if (!it || it.del) return;
     commit({ ...it, del: true }, it);
-    if (selected === it.id) selected = null;
+    sel.delete(it.id);
+  }
+
+  // ------------------------------------------ выделение
+
+  const selItems = () => [...sel].map((id) => items.get(id)).filter((it) => it && !it.del && it.id !== editingId);
+
+  function selBox() {
+    const list = selItems();
+    if (!list.length) return null;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const it of list) { const b = bounds(it); x0 = Math.min(x0, b.x0); y0 = Math.min(y0, b.y0); x1 = Math.max(x1, b.x1); y1 = Math.max(y1, b.y1); }
+    return { x0, y0, x1, y1 };
+  }
+
+  // Предмет, увеличенный в k раз от точки (ox, oy): штрих — точки и толщина, текст — кегль.
+  function scaled(o, k, ox, oy) {
+    const it = { ...o, x: ox + (o.x - ox) * k, y: oy + (o.y - oy) * k };
+    if (o.k === 'stroke') { it.p = o.p.map((v) => Math.round(v * k * 10) / 10); it.w = o.w * k; }
+    else if (o.k === 'text') it.size = Math.max(6, o.size * k);
+    else { it.w = o.w * k; it.h = o.h * k; }
+    return it;
+  }
+
+  function deleteSelection() {
+    commitGroup(selItems().map((it) => [{ ...it, del: true }, it]));
+    sel.clear();
+    dirty = true;
+  }
+
+  function duplicateSelection() {
+    const d = 24 / view.s, z = Date.now();
+    const copies = commitGroup(selItems().map((it, i) => [{ ...it, id: uid(me), x: it.x + d, y: it.y + d, z: z + i }, null]));
+    sel.clear();
+    for (const it of copies) sel.add(it.id);
+    dirty = true;
   }
 
   // ------------------------------------------ касания и мышь
@@ -359,10 +439,22 @@ export function createBoard({ root, send, myId, onToggle }) {
     if (pts.size > 2) return;
     const w = toWorld(p.x, p.y);
     const pan = e.button === 1 || spaceHeld || tool === 'hand';
-    if (pan) {
-      const it = tool === 'hand' && !spaceHeld && e.button === 0 ? hit(w.x, w.y, 6 / view.s) : null;
-      if (it) { selected = it.id; act = { kind: 'move', it, before: it, w0: w, x0: it.x, y0: it.y }; }
-      else { selected = null; act = { kind: 'pan', p0: p, vx: view.x, vy: view.y }; }
+    if (pan) { act = { kind: 'pan', p0: p, vx: view.x, vy: view.y }; dirty = true; return; }
+    if (tool === 'select') {
+      const box = selBox();
+      if (box && Math.hypot((box.x1 - w.x) * view.s, (box.y1 - w.y) * view.s) < 18) {
+        act = { kind: 'scale', ox: box.x0, oy: box.y0, bw: Math.max(1, box.x1 - box.x0), bh: Math.max(1, box.y1 - box.y0), orig: selItems() };
+        return;
+      }
+      const it = hit(w.x, w.y, 6 / view.s);
+      if (it) {
+        if (e.shiftKey) { if (sel.has(it.id)) sel.delete(it.id); else sel.add(it.id); act = null; dirty = true; return; }
+        if (!sel.has(it.id)) { sel.clear(); sel.add(it.id); }
+        act = { kind: 'move', w0: w, orig: selItems() };
+      } else {
+        if (!e.shiftKey) sel.clear();
+        act = { kind: 'frame', a: w, b: w, keep: new Set(sel) };
+      }
       dirty = true;
       return;
     }
@@ -376,7 +468,7 @@ export function createBoard({ root, send, myId, onToggle }) {
     }
     // Перо и маркер.
     const marker = tool === 'marker';
-    act = { kind: 'draw', item: { id: uid(me), k: 'stroke', x: w.x, y: w.y, p: [0, 0], c: color, w: (marker ? WIDTHS.marker : WIDTHS.pen) / Math.sqrt(view.s), m: marker, z: Date.now() }, sent: 0 };
+    act = { kind: 'draw', straight: tool === 'line' || e.shiftKey, item: { id: uid(me), k: 'stroke', x: w.x, y: w.y, p: [0, 0], c: color, w: (marker ? WIDTHS.marker : WIDTHS.pen) / Math.sqrt(view.s), m: marker, z: Date.now() }, sent: 0 };
     dirty = true;
   });
 
@@ -398,9 +490,22 @@ export function createBoard({ root, send, myId, onToggle }) {
       view.y = act.vy - (p.y - act.p0.y) / view.s;
       dirty = true;
     } else if (act.kind === 'move') {
+      const w = toWorld(p.x, p.y), dx = w.x - act.w0.x, dy = w.y - act.w0.y;
+      for (const o of act.orig) items.set(o.id, { ...o, x: o.x + dx, y: o.y + dy });
+      act.moved = dx !== 0 || dy !== 0;
+      dirty = true;
+    } else if (act.kind === 'scale') {
       const w = toWorld(p.x, p.y);
-      act.it = { ...act.it, x: act.x0 + w.x - act.w0.x, y: act.y0 + w.y - act.w0.y };
-      items.set(act.it.id, act.it);
+      const k = clamp(Math.max((w.x - act.ox) / act.bw, (w.y - act.oy) / act.bh), 0.05, 50);
+      for (const o of act.orig) items.set(o.id, scaled(o, k, act.ox, act.oy));
+      act.moved = k !== 1;
+      dirty = true;
+    } else if (act.kind === 'frame') {
+      act.b = toWorld(p.x, p.y);
+      const x0 = Math.min(act.a.x, act.b.x), y0 = Math.min(act.a.y, act.b.y), x1 = Math.max(act.a.x, act.b.x), y1 = Math.max(act.a.y, act.b.y);
+      sel.clear();
+      for (const id of act.keep) sel.add(id);
+      for (const it of alive()) { const b = bounds(it); if (b.x0 < x1 && b.x1 > x0 && b.y0 < y1 && b.y1 > y0) sel.add(it.id); }
       dirty = true;
     } else if (act.kind === 'erase') {
       const w = toWorld(p.x, p.y);
@@ -408,8 +513,18 @@ export function createBoard({ root, send, myId, onToggle }) {
     } else if (act.kind === 'draw') {
       const w = toWorld(p.x, p.y), it = act.item, n = it.p.length;
       const dx = w.x - it.x, dy = w.y - it.y;
-      if (Math.hypot(dx - it.p[n - 2], dy - it.p[n - 1]) * view.s < 1.5) return;
-      it.p.push(Math.round(dx * 10) / 10, Math.round(dy * 10) / 10);
+      if (act.straight || e.shiftKey) {
+        // Линия: прямая от точки нажатия до курсора, тянется, пока не отпустишь. Инструмент
+        // «Линия» или Shift на пере и маркере; зажал Shift хоть на миг — штрих уже линия.
+        act.straight = true;
+        it.p = [0, 0, Math.round(dx * 10) / 10, Math.round(dy * 10) / 10];
+        dirty = true;
+        return; // остальным — уже готовая линия, когда отпустишь
+      }
+      // Стабилизатор, как в графических планшетах: кисть идёт за пером с небольшой задержкой
+      // и гасит дрожание руки. Берём все промежуточные точки движения, а не только последнюю.
+      const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+      for (const ev of evs.length ? evs : [e]) { const q = local(ev); smooth(act, toWorld(q.x, q.y)); }
       dirty = true;
       // Остальные видят штрих по ходу, а не только когда палец отпущен.
       const now = performance.now();
@@ -422,15 +537,48 @@ export function createBoard({ root, send, myId, onToggle }) {
     if (act && act.kind === 'pinch') { if (!pts.size) act = null; return; }
     if (!act) return;
     if (act.kind === 'draw') {
+      if (!act.straight) catchUp(act); // кисть догоняет точку, где перо отпустили
       const it = commit(act.item);
       if (it.p.length === 2) dots.push({ id: it.id, t: performance.now() }); // точка от щелчка: вдруг это начало двойного
     }
-    else if (act.kind === 'move' && (act.it.x !== act.before.x || act.it.y !== act.before.y)) { items.set(act.before.id, act.before); commit(act.it, act.before); }
+    else if ((act.kind === 'move' || act.kind === 'scale') && act.moved) {
+      // Отпустили — записываем окончательное положение одним изменением на всю группу.
+      const next = act.orig.map((o) => items.get(o.id));
+      for (const o of act.orig) items.set(o.id, o);
+      commitGroup(next.map((it, i) => [it, act.orig[i]]));
+    }
     act = null;
     dirty = true;
     showPanelSoon();
   };
   canvas.addEventListener('pointerup', end);
+
+  // Стабилизатор «на нитке», как в графических редакторах: кисть привязана к перу нитью длиной
+  // LAZY пикселей экрана и сдвигается, только когда нить натянута, — дрожь мельче нити не
+  // рисуется вовсе. Поверх — лёгкая плавность FOLLOW, чтобы на поворотах не было углов.
+  const LAZY = 9, FOLLOW = 0.5;
+  function smooth(a, w) {
+    a.target = w;
+    if (a.lx === undefined) { a.lx = a.bx = a.item.x; a.ly = a.by = a.item.y; }
+    const r = LAZY / view.s, dx = w.x - a.lx, dy = w.y - a.ly, d = Math.hypot(dx, dy);
+    if (d > r) { a.lx += dx / d * (d - r); a.ly += dy / d * (d - r); }
+    a.bx += (a.lx - a.bx) * FOLLOW;
+    a.by += (a.ly - a.by) * FOLLOW;
+    put(a, a.bx, a.by);
+  }
+
+  function put(a, x, y) {
+    const it = a.item, dx = x - it.x, dy = y - it.y;
+    if (Math.hypot(dx - it.p[it.p.length - 2], dy - it.p[it.p.length - 1]) * view.s < 1.2) return;
+    it.p.push(Math.round(dx * 10) / 10, Math.round(dy * 10) / 10);
+  }
+
+  // Отпустили перо: кисть плавно дотягивается до него — штрих кончается там, где рука.
+  function catchUp(a) {
+    if (!a.target || a.bx === undefined) return;
+    for (let i = 0; i < 8; i++) { a.bx += (a.target.x - a.bx) * 0.45; a.by += (a.target.y - a.by) * 0.45; put(a, a.bx, a.by); }
+    put(a, a.target.x, a.target.y);
+  }
   canvas.addEventListener('pointercancel', end);
 
   canvas.addEventListener('wheel', (e) => {
@@ -446,7 +594,7 @@ export function createBoard({ root, send, myId, onToggle }) {
     const now = performance.now();
     for (const d of dots.splice(0)) {
       const it = items.get(d.id);
-      if (it && !it.del && now - d.t < 700) { commit({ ...it, del: true }, null, false); const i = undo.findIndex((u) => u.after.id === d.id); if (i >= 0) undo.splice(i, 1); }
+      if (it && !it.del && now - d.t < 700) { commit({ ...it, del: true }, null, false); const i = undo.findIndex((u) => u.list.some((x) => x.after.id === d.id)); if (i >= 0) undo.splice(i, 1); }
     }
   }
 
@@ -539,7 +687,8 @@ export function createBoard({ root, send, myId, onToggle }) {
     const lines = wrap(text, 240, '500 17px -apple-system, system-ui, sans-serif').length;
     const h = clamp(lines * 22 + 32 + (from ? 20 : 0), 80, 420);
     const it = commit({ id: uid(me), k: 'note', x: c.x - 136, y: c.y - h / 2, w: 272, h, t: String(text).slice(0, 2000), c: COLORS[1], z: Date.now(), ...(from ? { from } : {}) });
-    selected = it.id;
+    sel.clear();
+    sel.add(it.id);
     if (!at) reveal(it);
   }
 
@@ -569,14 +718,17 @@ export function createBoard({ root, send, myId, onToggle }) {
     const op = from.pop();
     if (!op) return;
     to.push(op);
-    const target = from === undo ? op.before : op.after;
-    const cur = items.get(op.after.id);
-    commit(target ? { ...target, del: !!target.del } : { ...cur, del: true }, null, false);
+    for (const { before, after } of op.list) {
+      const target = from === undo ? before : after;
+      const cur = items.get(after.id);
+      commit(target ? { ...target, del: !!target.del } : { ...cur, del: true }, null, false);
+    }
+    dirty = true;
   }
 
   // ------------------------------------------ клавиши
 
-  const TOOLS = { p: 'pen', m: 'marker', e: 'eraser', t: 'text', h: 'hand' };
+  const TOOLS = { v: 'select', p: 'pen', l: 'line', m: 'marker', e: 'eraser', t: 'text', h: 'hand' };
 
   function onKey(e) {
     if (!open || editing) return;
@@ -585,10 +737,22 @@ export function createBoard({ root, send, myId, onToggle }) {
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.code === 'KeyZ') { e.preventDefault(); e.stopImmediatePropagation(); step(e.shiftKey ? redo : undo, e.shiftKey ? undo : redo); return; }
     if (mod && e.code === 'KeyY') { e.preventDefault(); e.stopImmediatePropagation(); step(redo, undo); return; }
+    if (mod && e.code === 'KeyA') {
+      // Всё, что сейчас видно на экране, — не всю бесконечную доску.
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setTool('select');
+      const a = toWorld(0, 0), b = toWorld(canvas.clientWidth, canvas.clientHeight);
+      for (const it of alive()) { const r = bounds(it); if (r.x0 < b.x && r.x1 > a.x && r.y0 < b.y && r.y1 > a.y) sel.add(it.id); }
+      dirty = true;
+      return;
+    }
+    if (mod && e.code === 'KeyD' && sel.size) { e.preventDefault(); e.stopImmediatePropagation(); duplicateSelection(); return; }
     if (mod) return;
+    if (e.key === 'Escape' && sel.size) { sel.clear(); dirty = true; e.preventDefault(); e.stopImmediatePropagation(); return; }
     if (e.code === 'Space') { spaceHeld = true; canvas.classList.add('grab'); e.preventDefault(); e.stopImmediatePropagation(); return; }
-    if ((e.key === 'Backspace' || e.key === 'Delete') && selected) { erase(items.get(selected)); e.preventDefault(); e.stopImmediatePropagation(); return; }
-    const t = TOOLS[e.key.toLowerCase()] || TOOLS[{ KeyP: 'p', KeyM: 'm', KeyE: 'e', KeyT: 't', KeyH: 'h' }[e.code]];
+    if ((e.key === 'Backspace' || e.key === 'Delete') && sel.size) { deleteSelection(); e.preventDefault(); e.stopImmediatePropagation(); return; }
+    const t = TOOLS[e.key.toLowerCase()] || TOOLS[{ KeyV: 'v', KeyP: 'p', KeyL: 'l', KeyM: 'm', KeyE: 'e', KeyT: 't', KeyH: 'h' }[e.code]];
     if (t) { setTool(t); e.preventDefault(); e.stopImmediatePropagation(); return; }
     if (e.key === '0') { fit(); e.stopImmediatePropagation(); }
     if (e.key.length === 1 || e.key === 'Enter') e.stopImmediatePropagation(); // буквы на доске не открывают чат
@@ -600,7 +764,7 @@ export function createBoard({ root, send, myId, onToggle }) {
 
   function setTool(t) {
     tool = t;
-    selected = null;
+    if (t !== 'select') sel.clear();
     for (const b of panel.querySelectorAll('[data-tool]')) b.classList.toggle('on', b.dataset.tool === t);
     canvas.dataset.tool = t;
     dirty = true;
@@ -609,9 +773,10 @@ export function createBoard({ root, send, myId, onToggle }) {
   function setColor(c) {
     color = c;
     for (const b of panel.querySelectorAll('[data-color]')) b.classList.toggle('on', b.dataset.color === c);
-    if (tool === 'eraser' || tool === 'hand') setTool('pen');
-    const sel = selected && items.get(selected);
-    if (sel && !sel.del && sel.k !== 'image') commit({ ...sel, c }, sel); // перекрасить выделенное
+    // Есть выделенное — перекрасить его; иначе цвет для следующего штриха.
+    const list = selItems().filter((it) => it.k !== 'image');
+    if (list.length) { commitGroup(list.map((it) => [{ ...it, c }, it])); return; }
+    if (tool === 'eraser' || tool === 'hand' || tool === 'select') setTool('pen');
   }
 
   for (const c of COLORS) {
@@ -628,7 +793,7 @@ export function createBoard({ root, send, myId, onToggle }) {
     if (b.dataset.tool) setTool(b.dataset.tool);
     else if (b.dataset.color) setColor(b.dataset.color);
     else if (b.dataset.act === 'undo') step(undo, redo);
-    else if (b.dataset.act === 'note') { addNote('Заметка'); startEdit(items.get(selected)); }
+    else if (b.dataset.act === 'note') { addNote('Заметка'); startEdit(selItems()[0]); }
     else if (b.dataset.act === 'image') root.querySelector('input[type=file]').click();
   });
   root.querySelector('input[type=file]').addEventListener('change', (e) => {
@@ -676,6 +841,7 @@ export function createBoard({ root, send, myId, onToggle }) {
     addNote,
     fit,
     count: () => alive().length,
+    selected: () => sel.size,
     items: () => alive(),
   };
 }
