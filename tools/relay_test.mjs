@@ -82,6 +82,8 @@ try {
   await A.ev('zvonilka.call.sendChat("привет через сервер")');
   await A.ev('zvonilka.call.toggleMic()');
   check('сообщение дошло', await until(() => B.ev('document.getElementById("chat-log").textContent.includes("привет через сервер")'), 6000));
+  await A.ev('zvonilka.board.addNote("Заметка через сервер")');
+  check('доска работает через ретранслятор', await until(() => B.ev('zvonilka.board.items().some((x) => x.t === "Заметка через сервер")'), 8000));
   await A.ev('zvonilka.call.leave()');
   check('вышел — собеседник это видит', await until(async () => (await B.ev('zvonilka.call.stats()')).length === 0, 10000));
   for (const P of [A, B]) {

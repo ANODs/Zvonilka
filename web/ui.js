@@ -6,6 +6,7 @@
 // громкость, смахнул — следующий, начал печатать — сообщение, удержал микрофон — сказал.
 
 import * as call from './call.js';
+import { createBoard } from './board.js';
 
 const { me, peers, prefs, savePrefs } = call;
 const TG_BOT = 'StartNewCallBot'; // бот, у которого эта страница — Mini App
@@ -57,7 +58,7 @@ async function initTelegram() {
 // «Назад» в шапке Telegram закрывает то, что открыто, — как системная кнопка на телефоне.
 function syncBack() {
   if (!tg || !tg.isVersionAtLeast('6.1')) return;
-  const open = me.joined && (!sheet.hidden || chatOpen || immersive || inPresent());
+  const open = me.joined && (!sheet.hidden || chatOpen || immersive || inPresent() || board.isOpen());
   quiet(() => (open ? tg.BackButton.show() : tg.BackButton.hide()));
 }
 
@@ -169,6 +170,15 @@ function buzz(strong) {
 // ---------------------------------------------------------------- значки
 
 const ICONS = {
+  back: '<path d="M19 12H5.500M11 6l-6 6 6 6"/>',
+  pen: '<path d="M4 20l1-4.500L16.500 4a2.100 2.100 0 0 1 3 3L8 18.500z"/><path d="M14.500 6l3 3"/>',
+  marker: '<path d="M9 15l-4 4h5l2-2M9 15l7.500-7.500a2.100 2.100 0 0 1 3 3L12 18M9 15l3 3"/>',
+  eraser: '<path d="M8.500 20h11M5 15.500l8.500-8.500a2 2 0 0 1 2.800 0l2.700 2.700a2 2 0 0 1 0 2.800L12 19.500H8.500z"/><path d="M9.500 11l4.500 4.500"/>',
+  text: '<path d="M5 6.500V5h14v1.500M12 5v14M9.500 19h5"/>',
+  hand: '<path d="M8 13V6.500a1.500 1.500 0 0 1 3 0V12M11 11V5a1.500 1.500 0 0 1 3 0v6M14 11V6.500a1.500 1.500 0 0 1 3 0V14c0 4-2.500 6.500-6 6.500-2.500 0-4-1.200-5.500-3.500L4 14.500a1.500 1.500 0 0 1 2.500-1.700L8 15"/>',
+  note: '<path d="M5 4.500h14v10l-5 5H5z"/><path d="M14 19.500v-5h5"/>',
+  image: '<rect x="3.500" y="5" width="17" height="14" rx="2.500"/><circle cx="9" cy="10" r="1.700"/><path d="M20.500 16l-5-5L6 19"/>',
+  undo: '<path d="M9 14L4.500 9.500 9 5"/><path d="M4.500 9.500H14a5.500 5.500 0 0 1 0 11h-3"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.500 11a6.500 6.500 0 0 0 13 0M12 17.500V21"/>',
   micOff: '<path d="M9 9V6a3 3 0 0 1 5.700-1.300M15 10v1a3 3 0 0 1-4.800 2.400M5.500 11a6.500 6.500 0 0 0 10.400 5.200M18.500 11a6.500 6.500 0 0 1-.600 2.700M12 17.500V21M4 4l16 16"/>',
   cam: '<rect x="3" y="6.500" width="12.500" height="11" rx="3"/><path d="M15.500 10.500l5.500-3v9l-5.500-3"/>',
@@ -217,6 +227,7 @@ function hint(key, text) {
 
 function pumpHints() {
   if (hintBusy || !hints.length || !me.joined) return;
+  if (board.isOpen() && !hints[0].key.startsWith('board')) { setTimeout(pumpHints, 3000); return; } // на доске подсказки звонка не к месту
   const h = hints.shift();
   hintBusy = true;
   prefs.hints[h.key] = 1;
@@ -549,6 +560,7 @@ function render() {
   for (const t of tiles.values()) play(t.video);
   renderBar();
   renderTop();
+  if (board.isOpen()) { pipBoard(); renderBoardMic(); }
   syncBack();
   if (!canIdle()) callEl.classList.remove('idle');
 
@@ -740,6 +752,7 @@ function onDown(e) {
   const el = e.target.closest('.tile');
   const t = el && tiles.get(el.dataset.key);
   const p = stagePoint(e);
+  ges.edge = e.pointerType !== 'mouse' && p.x > stage.clientWidth - 28; // от правого края — доска
   Object.assign(ges, { mode: 'press', id: e.pointerId, key: t ? t.key : null, mouse: e.pointerType === 'mouse', x0: p.x, y0: p.y, x: p.x, y: p.y, t0: performance.now() });
   clearTimeout(ges.hold);
   ges.hold = setTimeout(holdStart, 380);
@@ -762,6 +775,9 @@ function onMove(e) {
       Object.assign(ges, { mode: 'pip', rx: t.rect.x, ry: t.rect.y, px: null, py: null });
       t.dragging = true;
       t.el.classList.add('drag');
+    } else if (ges.edge) {
+      ges.mode = 'swipe';
+      ges.axis = 'x';
     } else if (t && t.zoom) {
       Object.assign(ges, { mode: 'pan', z0: { ...t.zoom }, z: null });
       t.busy = true;
@@ -910,6 +926,7 @@ function panEnd() {
 // Смахивание по крупной плитке: в сторону — следующий человек, вниз — обратно к сетке;
 // вверх где угодно — написать сообщение. Плитка едет за пальцем.
 function swipeMove(dx, dy) {
+  if (ges.edge) return;
   const t = tiles.get(leadKey());
   if (!t || ges.key !== t.key) return;
   let x = 0, y = 0, s = 1;
@@ -921,6 +938,7 @@ function swipeMove(dx, dy) {
 }
 
 function swipeEnd(dx, dy, ms) {
+  if (ges.edge) { ges.edge = false; if (dx < -40) openBoard(); return; }
   const t = tiles.get(leadKey());
   if (t) t.el.classList.remove('drag');
   const onLead = !!t && ges.key === t.key, flick = ms < 260;
@@ -1090,6 +1108,8 @@ function onKeyDown(e) {
   if (!me.joined) return;
   audio();
   if (e.key === 'Escape') return back();
+  if ((e.metaKey || e.ctrlKey) && e.code === 'KeyB') { e.preventDefault(); if (board.isOpen()) board.close(); else openBoard(); return; }
+  if (board.isOpen()) return; // на доске свои клавиши (web/board.js)
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const el = e.target instanceof Element ? e.target : null;
   if (el && el.closest('input, textarea, select')) return;
@@ -1124,6 +1144,7 @@ function onKeyUp(e) {
 // Шаг назад: закрыть то, что открыто последним.
 function back() {
   if (!sheet.hidden) closeSheet();
+  else if (board.isOpen()) board.close();
   else if (chatOpen) closeChat();
   else if (immersive) setImmersive(false);
   else if (inPresent()) focus('grid');
@@ -1300,6 +1321,87 @@ function toggleChrome() {
   if (canIdle()) callEl.classList.add('idle');
 }
 
+// ---------------------------------------------------------------- доска
+
+// Общая доска комнаты (web/board.js) выезжает поверх звонка: смахнуть от правого края, ⌘B или
+// правый край экрана мышью. Звонок идёт дальше, собеседник — окошком в углу.
+const boardEl = $('board');
+const board = createBoard({ root: boardEl, myId: me.id, send: (obj) => call.sendBoard(obj), onToggle: onBoardToggle });
+
+function openBoard() {
+  if (!me.joined) return;
+  buzz();
+  board.open();
+}
+
+function onBoardToggle(state) {
+  if (state === 'news') {
+    $('edge').classList.add('news');
+    hint('board-news', coarse ? 'На доске новое — смахните от правого края' : 'На доске новое — ⌘B или правый край экрана');
+    return;
+  }
+  const on = state === 'open';
+  callEl.classList.toggle('board-open', on);
+  if (on) {
+    $('edge').classList.remove('news', 'show');
+    callEl.classList.remove('idle');
+    pipBoard();
+    renderBoardMic();
+    if (chatOpen) closeChat();
+  } else {
+    boardEl.querySelector('.bpip').srcObject = null;
+    showChrome();
+  }
+  syncBack();
+}
+
+// Пока открыта доска, собеседник остаётся окошком в углу: видно, кто говорит.
+function pipBoard() {
+  const v = boardEl.querySelector('.bpip');
+  const p = [...peers.values()].find((x) => x.status === 'connected' && x.state.cam && x.cam);
+  v.hidden = !p;
+  if (p && v.srcObject !== p.cam) { v.srcObject = p.cam; v.play().catch(() => {}); }
+}
+
+function renderBoardMic() {
+  const b = boardEl.querySelector('[data-act=mic]'), name = me.mic ? 'mic' : 'micOff';
+  if (b.dataset.icon !== name) { b.dataset.icon = name; b.innerHTML = icon(name); }
+  b.classList.toggle('off', !me.mic);
+}
+
+function wireBoard() {
+  for (const b of boardEl.querySelectorAll('[data-tool], [data-act]')) b.innerHTML = icon(b.dataset.tool || b.dataset.act);
+  boardEl.querySelector('.bpanel').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    if (b.dataset.act === 'back') board.close();
+    else if (b.dataset.act === 'mic') call.toggleMic();
+  });
+  boardEl.querySelector('.bpip').addEventListener('click', () => board.close());
+  $('edge').addEventListener('click', openBoard);
+  // Мышь у правого края — показать язычок доски.
+  window.addEventListener('pointermove', (e) => {
+    if (e.pointerType !== 'mouse') return;
+    $('edge').classList.toggle('show', me.joined && !board.isOpen() && e.clientX > innerWidth - 56 && sheet.hidden);
+  });
+  // Смахнуть от левого края доски — назад к звонку, как «назад» в телефоне.
+  let from = null;
+  boardEl.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' || e.clientX > 24) return;
+    from = { id: e.pointerId, x: e.clientX };
+    e.stopPropagation();
+  }, true);
+  boardEl.addEventListener('pointermove', (e) => {
+    if (!from || e.pointerId !== from.id) return;
+    e.stopPropagation();
+    if (e.clientX - from.x > 50) { from = null; board.close(); }
+  }, true);
+  boardEl.addEventListener('pointerup', () => { from = null; }, true);
+  call.on('board', ({ m }) => board.receive(m));
+  // Новому собеседнику — всё, что уже нарисовано.
+  call.on('link', (p) => { for (const msg of board.snapshot()) call.sendBoard(msg, p); });
+}
+
 // ---------------------------------------------------------------- вход и выход
 
 let wakeLock = null;
@@ -1333,6 +1435,7 @@ function enter(room, created) {
   show('call');
   me.dev = phone ? 'телефон' : 'компьютер';
   call.join(room, prefs.name || tgName);
+  board.load(room, me.id);
   if (created && !tg) copyText(browserLink()).then((ok) => { if (ok && me.joined) toast('Ссылка на звонок скопирована — отправьте её, кому хотите'); });
   audio();
   render();
@@ -1344,6 +1447,7 @@ function enter(room, created) {
 }
 
 function afterLeave() {
+  board.close();
   clearInterval(levelTimer);
   clearTimeout(idleTimer);
   clearTimeout(ges.hold);
@@ -1398,6 +1502,7 @@ function wireCall() {
       chime(true);
       buzz();
       showChrome();
+      setTimeout(() => hint('board', coarse ? 'Смахните от правого края — общая доска комнаты' : '⌘B или правый край экрана — общая доска комнаты'), 9000);
       setTimeout(() => hint('volume', coarse ? 'Зажмите человека и ведите вверх или вниз — это его громкость' : 'Колёсико над человеком меняет его громкость'), 2500);
     } else if (type === 'left') chime(false);
     else if (type === 'lost') { chime(false); toast(`${peer.name}: связь потеряна`); }
@@ -1431,6 +1536,7 @@ function fitViewport() {
 }
 
 function wireUi() {
+  wireBoard();
   document.body.classList.toggle('touch', coarse);
   buildBar();
   wireSheetDrag();
@@ -1536,7 +1642,7 @@ function wireUi() {
 
 // Состояние интерфейса для живого теста (tools/call_test.mjs) и отладки из консоли.
 window.zvonilka = {
-  call, tiles, view,
+  call, tiles, view, board,
   focus, step, openChat, closeChat, openSheet, closeSheet, setImmersive, inviteLink, browserLink, telegramLink,
   snapshot: () => ({
     joined: me.joined, mode: view.mode, big: view.big, pinned, immersive,

@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#000000">
 <meta name="referrer" content="no-referrer">
 <!-- Странице можно только то, что ей нужно: свои файлы, скрипт Telegram и два брокера сигналинга. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' data:; media-src 'self' blob: mediastream:; connect-src wss://broker.emqx.io:8084 wss://broker.hivemq.com:8884 https://zvonilka-bot.timoshkin-timofey.workers.dev wss://zvonilka-bot.timoshkin-timofey.workers.dev ws://127.0.0.1:*; object-src 'none'; base-uri 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src wss://broker.emqx.io:8084 wss://broker.hivemq.com:8884 https://zvonilka-bot.timoshkin-timofey.workers.dev wss://zvonilka-bot.timoshkin-timofey.workers.dev ws://127.0.0.1:*; object-src 'none'; base-uri 'none'">
 <link rel="icon" type="image/svg+xml" href="icon.svg">
 <link rel="icon" type="image/png" href="icon.png">
 <link rel="apple-touch-icon" href="icon.png">
@@ -41,6 +41,31 @@
 
 <main id="call" hidden>
   <div id="stage"></div>
+
+  <section id="board" hidden aria-label="Доска">
+    <canvas></canvas>
+    <textarea class="bedit" hidden spellcheck="false" aria-label="Текст на доске"></textarea>
+    <p class="bhint"><span class="for-touch">Рисуйте пальцем, двумя — двигайте холст.</span><span class="for-mouse">Рисуйте мышью, колёсико — двигать, ⌘ + колёсико — приблизить. ⌘V — вставить картинку или текст.</span></p>
+    <video class="bpip" muted playsinline autoplay disablepictureinpicture></video>
+    <div class="bpanel glass" role="toolbar" aria-label="Инструменты доски">
+      <button type="button" data-act="back" title="К звонку (Esc)" aria-label="К звонку"></button>
+      <button type="button" data-act="mic" title="Микрофон" aria-label="Микрофон"></button>
+      <i class="sep"></i>
+      <button type="button" data-tool="pen" title="Перо (P)" aria-label="Перо"></button>
+      <button type="button" data-tool="marker" title="Маркер (M)" aria-label="Маркер"></button>
+      <button type="button" data-tool="eraser" title="Ластик (E)" aria-label="Ластик"></button>
+      <button type="button" data-tool="text" title="Текст (T)" aria-label="Текст"></button>
+      <button type="button" data-tool="hand" title="Двигать (H, пробел)" aria-label="Двигать"></button>
+      <i class="sep"></i>
+      <span class="colors"></span>
+      <i class="sep"></i>
+      <button type="button" data-act="note" title="Заметка" aria-label="Заметка"></button>
+      <button type="button" data-act="image" title="Картинка" aria-label="Картинка"></button>
+      <button type="button" data-act="undo" title="Отменить (⌘Z)" aria-label="Отменить"></button>
+    </div>
+    <input type="file" accept="image/*" multiple hidden>
+  </section>
+  <button id="edge" type="button" aria-label="Открыть доску" title="Доска (⌘B)"><span>Доска</span></button>
 
   <div id="top">
     <button class="glass" id="grid" type="button" aria-label="Показать всех" title="Показать всех" hidden></button>

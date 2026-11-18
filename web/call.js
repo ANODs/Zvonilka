@@ -514,7 +514,7 @@ function makePc(p) {
   // Канал данных одинаково объявлен с обеих сторон: открывается без своего рукопожатия.
   const dc = pc.createDataChannel('zvonilka', { negotiated: true, id: 0 });
   p.dc = dc;
-  dc.onopen = () => { if (p.pc === pc) sendState(p); };
+  dc.onopen = () => { if (p.pc === pc) { sendState(p); emit('link', p); } };
   dc.onmessage = (e) => { if (p.pc === pc) onChannel(p, e.data); };
   // Канал закрылся при живом соединении — значит, собеседник закрыл страницу.
   dc.onclose = () => { setTimeout(() => { if (p.pc === pc && peers.get(p.id) === p) dropPeer(p, 'left'); }, 1500); };
@@ -589,6 +589,8 @@ async function onDesc(p, d) {
     makePc(p);
   }
   const pc = p.pc;
+  // Ответ на повторно отправленное предложение: всё уже договорено, лишний ответ не нужен.
+  if (d.type === 'answer' && pc.signalingState === 'stable') return;
   try {
     const collision = d.type === 'offer' && (p.makingOffer || pc.signalingState !== 'stable');
     p.ignoreOffer = !p.polite && collision;
@@ -781,6 +783,7 @@ function relayHeard(p) {
   p.ever = true;
   sendState(p);
   if (first) emit('notice', { type: 'joined', peer: p });
+  emit('link', p);
   changed();
 }
 
@@ -833,6 +836,7 @@ function onChannel(p, data) {
   } else if (m.t === 'desc') { if (!p.via) onDesc(p, m.d); }
   else if (m.t === 'cand') { if (!p.via) onCands(p, m.c); }
   else if (m.t === 'chat') { const text = String(m.text == null ? '' : m.text).slice(0, 2000); if (text) emit('chat', { peer: p, text }); }
+  else if (m.t === 'board') emit('board', { peer: p, m });
   else if (m.t === 'bye') dropPeer(p, 'left');
 }
 
@@ -853,6 +857,16 @@ export function sendChat(text) {
   for (const p of peers.values()) {
     if (p.relay) { if (relay) relay.control(p.id, JSON.parse(msg)); }
     else if (p.dc && p.dc.readyState === 'open') { try { p.dc.send(msg); } catch (_) {} }
+  }
+}
+
+// Изменения доски (web/board.js): одному участнику или всем — тем же путём, что и чат.
+export function sendBoard(obj, to) {
+  const msg = { ...obj, t: 'board' };
+  const text = JSON.stringify(msg);
+  for (const p of to ? [to] : peers.values()) {
+    if (p.relay) { if (relay) relay.control(p.id, msg); }
+    else if (p.dc && p.dc.readyState === 'open') { try { p.dc.send(text); } catch (_) {} }
   }
 }
 
