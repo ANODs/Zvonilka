@@ -11,12 +11,22 @@
 // соединения с участниками строятся не напрямую, а через узел, и он пересылает между ними
 // медиа и сообщения.
 
+import { createRelay } from './relay.js';
+
 const BROKERS = ['wss://broker.emqx.io:8084/mqtt', 'wss://broker.hivemq.com:8884/mqtt'];
 const ICE_SERVERS = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] }];
 // Запасной путь, когда напрямую не выходит: ретранслятор Cloudflare. Временные ключи к нему
 // выдаёт воркер бота (bot/worker.js); не ответил — работаем без ретранслятора, как раньше.
 const ICE_URL = 'https://zvonilka-bot.timoshkin-timofey.workers.dev/ice';
 let iceServers = ICE_SERVERS;
+
+// Ретранслятор на том же воркере (web/relay.js): им пользуются пары, которые не соединились
+// напрямую. ?relay=<адрес> — другой воркер (для проверки), ?relay=force — сразу через него.
+const QUERY = new URLSearchParams(location.search);
+const RELAY_URL = /^(wss?|https?):\/\//.test(QUERY.get('relay') || '') ? QUERY.get('relay').replace(/^http/, 'ws') : ICE_URL.replace(/^https/, 'wss').replace(/\/ice$/, '');
+const RELAY_FORCE = QUERY.get('relay') === 'force' || QUERY.has('relayforce');
+const RELAY_AFTER = 14000; // столько ждём прямого соединения, прежде чем идти через ретранслятор
+let relay = null;
 
 async function loadIce() {
   try {
@@ -349,6 +359,7 @@ const sig = (() => {
       return true;
     },
     stop() { gen++; close(); },
+    key: () => k,
   };
 })();
 
@@ -396,6 +407,7 @@ function peerFor(id, m) {
     polite: me.id > id,               // звонит тот, у кого идентификатор меньше; вежливый уступает
     pc: null, dc: null, tx: null, cam: null, scr: null,
     via: '',                          // идентификатор узла, через который построено соединение
+    relay: false,                     // соединение идёт через ретранслятор
     state: { mic: false, cam: false, screen: false },
     status: 'new', ever: false, linked: false, makingOffer: false, ignoreOffer: false,
     cands: [], out: [], outTimer: 0, timer: 0, restarts: 0, started: 0, retryAt: 0,
@@ -420,6 +432,7 @@ function onSignal(m) {
   else if (m.t === 'desc') onDesc(p, m.d);
   else if (m.t === 'cand') onCands(p, m.c);
   else if (m.t === 'restart') { if (p.pc && !p.polite) { try { p.pc.restartIce(); } catch (_) {} } }
+  else if (m.t === 'relay') goRelay(p); // собеседник уже пошёл через ретранслятор — идём к нему
 }
 
 // Узел объявил себя: hello с полем node. Из двух узлов все выбирают тот, чей идентификатор меньше.
@@ -459,6 +472,7 @@ function reroute() {
   clearTimeout(hubProbe);
   hubProbe = 0;
   for (const p of peers.values()) {
+    if (p.relay) continue; // через ретранслятор и так идёт мимо прямых путей
     closePc(p);
     if (p.status !== 'blocked') p.status = p.ever ? 'reconnecting' : 'new';
     p.retryAt = 0;
@@ -472,7 +486,8 @@ function reroute() {
 const helloMsg = (to) => ({ t: 'hello', name: me.name, hue: me.hue, dev: me.dev, ...(to ? { to } : {}) });
 
 function onHello(p, m) {
-  if (p.pc) return;
+  if (p.pc || p.relay) return;
+  if (RELAY_FORCE && relayOk()) { if (!m.to) sig.send(helloMsg(p.id)); return goRelay(p); }
   if (p.status === 'blocked' && Date.now() < p.retryAt) return;
   if (hub) {
     // Со звездой каждый сам строит своё соединение до узла: оба должны знать друг о друге.
@@ -512,7 +527,7 @@ function makePc(p) {
 // Пока соединение не установилось: повторяем offer, если ответа нет, и сдаёмся через 25 секунд.
 function watchdog(p, pc) {
   if (p.pc !== pc || p.status === 'connected' || p.linked) return;
-  if (Date.now() - p.started > 25000) return blocked(p);
+  if (Date.now() - p.started > (relayOk() && !p.via ? RELAY_AFTER : 25000)) return blocked(p);
   if ((p.via || !p.polite) && pc.signalingState === 'have-local-offer' && pc.localDescription) sendDesc(p, pc.localDescription);
   p.timer = setTimeout(() => watchdog(p, pc), 7000);
 }
@@ -546,6 +561,7 @@ function wire(p) {
 function pushTrack(kind) {
   const i = KINDS.indexOf(kind), track = outgoing(kind);
   for (const p of peers.values()) if (p.tx) p.tx[i].sender.replaceTrack(track).catch(() => {});
+  if (relay && (kind === 'audio' || kind === 'video')) relay.refresh();
 }
 
 function sendDesc(p, d) {
@@ -699,10 +715,72 @@ function blocked(p) {
   p.why = !d.remote.size && !d.answered ? 'silent'
     : has(d.local, 'relay') || has(d.remote, 'relay') ? 'relay-failed'
     : !has(d.local, 'srflx', 'host') && !has(d.remote, 'srflx', 'host') ? 'hidden' : 'nat';
+  if (relayOk() && !hub) {
+    sig.send({ t: 'relay', to: p.id });
+    return goRelay(p);
+  }
   closePc(p);
   p.status = 'blocked';
   p.retryAt = Date.now() + 45000;
   emit('notice', { type: 'blocked', peer: p });
+  changed();
+}
+
+// ---------------------------------------------------------------- ретранслятор
+
+function relayOk() {
+  return !!sig.key() && !!window.WebSocket && !!window.AudioWorkletNode;
+}
+
+function ensureRelay() {
+  if (relay) return relay;
+  const k = sig.key();
+  relay = createRelay({
+    url: RELAY_URL + '/relay/' + k.topic.split('/')[1],
+    topic: k.topic,
+    aes: k.aes,
+    myId: me.id,
+    getTracks: () => ({ audio: outgoing('audio'), video: me.video }),
+    onControl: (from, m) => { const p = peers.get(from); if (p && p.relay) { relayHeard(p); onChannel(p, JSON.stringify(m)); } },
+    onMedia: (from) => { const p = peers.get(from); if (p && p.relay) relayHeard(p); },
+  });
+  return relay;
+}
+
+// Пара переходит на ретранслятор: прямое соединение бросаем, звук и видео идут через воркер.
+function goRelay(p) {
+  if (p.relay || !relayOk()) return;
+  closePc(p);
+  p.relay = true;
+  p.why = '';
+  p.status = 'connecting';
+  p.cam = ensureRelay().attach(p.id);
+  sendState(p);
+  // Собеседник так и не отозвался через ретранслятор — значит, и до него не достучаться.
+  p.timer = setTimeout(() => {
+    if (!p.relay || p.status === 'connected' || peers.get(p.id) !== p) return;
+    if (relay) relay.detach(p.id);
+    p.relay = false;
+    p.cam = null;
+    p.why = 'relay-failed';
+    p.status = 'blocked';
+    p.retryAt = Date.now() + 45000;
+    emit('notice', { type: 'blocked', peer: p });
+    changed();
+  }, 20000);
+  changed();
+}
+
+// Первое сообщение от собеседника через ретранслятор: связь есть.
+function relayHeard(p) {
+  p.heard = Date.now();
+  if (p.status === 'connected') return;
+  clearTimeout(p.timer);
+  const first = !p.ever;
+  p.status = 'connected';
+  p.ever = true;
+  sendState(p);
+  if (first) emit('notice', { type: 'joined', peer: p });
   changed();
 }
 
@@ -731,6 +809,7 @@ function dropPeer(p, why) {
   if (peers.get(p.id) !== p) return;
   const was = p.ever;
   closePc(p);
+  if (p.relay && relay) relay.detach(p.id);
   peers.delete(p.id);
   if (why === 'lost' || (why === 'left' && was)) emit('notice', { type: why, peer: p });
   applyQuality();
@@ -758,6 +837,7 @@ function onChannel(p, data) {
 }
 
 function sendState(p) {
+  if (p.relay) { if (relay) relay.control(p.id, { t: 'state', name: me.name, hue: me.hue, dev: me.dev, mic: me.mic, cam: me.cam, screen: me.screen }); return; }
   if (!p.dc || p.dc.readyState !== 'open') return;
   try { p.dc.send(JSON.stringify({ t: 'state', name: me.name, hue: me.hue, dev: me.dev, mic: me.mic, cam: me.cam, screen: me.screen })); } catch (_) {}
 }
@@ -771,7 +851,8 @@ function broadcastState() {
 export function sendChat(text) {
   const msg = JSON.stringify({ t: 'chat', text: String(text).slice(0, 2000) });
   for (const p of peers.values()) {
-    if (p.dc && p.dc.readyState === 'open') { try { p.dc.send(msg); } catch (_) {} }
+    if (p.relay) { if (relay) relay.control(p.id, JSON.parse(msg)); }
+    else if (p.dc && p.dc.readyState === 'open') { try { p.dc.send(msg); } catch (_) {} }
   }
 }
 
@@ -782,6 +863,7 @@ export function setName(value) {
 
 // Громкость речи участника от 0 до 1: браузер считает её сам, своей обработки звука не нужно.
 export function level(p) {
+  if (p.relay) return relay && p.state.mic ? relay.level(p.id) : 0;
   if (!p.tx || p.status !== 'connected' || !p.state.mic) return 0;
   try {
     const s = p.tx[0].receiver.getSynchronizationSources()[0];
@@ -1062,6 +1144,7 @@ export function leave() {
   for (const p of peers.values()) {
     if (p.dc && p.dc.readyState === 'open') { try { p.dc.send('{"t":"bye"}'); } catch (_) {} }
   }
+  if (relay) { relay.control('', { t: 'bye' }); const r = relay; relay = null; setTimeout(() => r.close(), 300); }
   if (!sig.farewell()) sig.send({ t: 'bye' });
   const mine = session;
   setTimeout(() => { if (mine === session) sig.stop(); }, 600); // даём прощанию уйти
@@ -1082,6 +1165,7 @@ export async function stats() {
   const out = [];
   for (const p of peers.values()) {
     const o = { id: p.id, name: p.name, status: p.status, state: p.state, dc: p.dc ? p.dc.readyState : 'none', via: p.via, why: p.why, local: [...p.diag.local].join(','), remote: [...p.diag.remote].join(','), relay: iceServers.length > 1, path: '', rtt: 0, audio: 0, video: 0, screen: 0, sent: 0 };
+    if (p.relay && relay) { Object.assign(o, relay.stats(p.id), { path: 'relay', dc: 'relay' }); }
     if (p.pc && p.tx) {
       const mids = p.tx.map((t) => t.mid);
       const report = await p.pc.getStats();

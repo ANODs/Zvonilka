@@ -12,6 +12,8 @@
 // Токен нигде не выводится; чужие запросы отсекаются по секретному заголовку,
 // который выводится из токена.
 
+import { DurableObject } from 'cloudflare:workers';
+
 const te = new TextEncoder();
 const hex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 
@@ -96,9 +98,37 @@ function testSocket() {
   return new Response(null, { status: 101, webSocket: client });
 }
 
+// Ретранслятор звонка (web/relay.js): по комнате на каждую тему звонка. Кто подключился, тот
+// получает все сообщения остальных. Сообщения запечатаны ключом комнаты, здесь их не открыть.
+const ORIGINS = /^https:\/\/(zvonilka\.timoshkin\.dev|anods\.github\.io)$|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
+export class Room extends DurableObject {
+  async fetch(request) {
+    if (this.ctx.getWebSockets().length >= 12) return new Response('Комната полна', { status: 429 });
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server); // пока все молчат, комната спит и не тратит лимиты
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  webSocketMessage(ws, message) {
+    if (typeof message === 'string' || message.byteLength > 262144) return;
+    for (const other of this.ctx.getWebSockets()) {
+      if (other !== ws) { try { other.send(message); } catch (_) {} }
+    }
+  }
+
+  webSocketClose(ws) { try { ws.close(); } catch (_) {} }
+}
+
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
+    const room = /^\/relay\/([0-9a-f]{32})$/.exec(path);
+    if (room) {
+      if (request.headers.get('upgrade') !== 'websocket') return new Response('Нужен WebSocket', { status: 426 });
+      if (!ORIGINS.test(request.headers.get('origin') || '')) return new Response('Нет', { status: 403 });
+      return env.ROOMS.get(env.ROOMS.idFromName(room[1])).fetch(request);
+    }
     if (path === '/test') return new Response(TEST_PAGE, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
     if (path === '/test/ws' && request.headers.get('upgrade') === 'websocket') return testSocket();
 

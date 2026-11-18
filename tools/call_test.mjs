@@ -570,10 +570,13 @@ try {
   const L = new Page(cdp, 'Слушатель');
   await L.open({ width: 1100, height: 700, hue: 120, deny: true });
   await L.go(link('Лев'));
+  const toastEarly = await until(() => L.eval('document.getElementById("toasts").textContent.includes("Нет доступа")'), 8000, 100);
   const hears = await until(async () => { const s = await L.stats(); return s.length === 2 && s.every((p) => p.status === 'connected' && p.audio > 5 && p.video > 3); }, 40000);
   const idL = hears ? await L.id() : '';
   const seen = hears && await until(async () => (await A.snap()).tiles.some((t) => t.key === idL && t.video === '0x0'), 6000);
-  check('без доступа к камере и микрофону — слушатель: всех видит и слышит', hears && seen && await L.eval('document.getElementById("toasts").textContent.includes("Нет доступа")'));
+  const toastSeen = !!toastEarly; // подсказка живёт несколько секунд — ловим её сразу после входа
+  check('без доступа к камере и микрофону — слушатель: всех видит и слышит', hears && seen && toastSeen,
+    hears && seen && toastSeen ? '' : `видит: ${!!hears}, его видят: ${!!seen}, подсказка: ${toastSeen}; ` + JSON.stringify((await L.stats()).map((x) => [x.name, x.status, x.path, x.audio, x.video, x.why])));
   await sleep(600);
   await L.shot('18-listener-desktop');
   await A.shot('18-with-listener-desktop');
