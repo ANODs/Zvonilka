@@ -38,8 +38,70 @@ async function hookSecret(token) {
 
 const json = (obj) => new Response(JSON.stringify(obj), { headers: { 'content-type': 'application/json' } });
 
+// Проверка канала: доходит ли до воркера долгий поток с телефона. Операторы в России местами
+// режут соединения с Cloudflare после первых килобайт — тогда ретранслятор здесь бесполезен.
+const TEST_PAGE = `<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Проверка канала</title>
+<style>body{margin:0;padding:24px;background:#000;color:#fff;font:17px/1.45 -apple-system,system-ui,sans-serif}
+h1{font-size:26px;margin:0 0 8px}p{color:#aaa;margin:0 0 20px}button{width:100%;height:56px;border:0;border-radius:28px;background:#fff;color:#000;font:600 17px system-ui}
+#log{margin-top:24px;white-space:pre-wrap}.ok{color:#5fd38d}.bad{color:#ff6b6b}b{font-size:22px}</style></head>
+<body><h1>Проверка канала</h1><p>Выключите VPN и Wi-Fi, оставьте только мобильную связь, нажмите кнопку и подождите до 40 секунд.</p>
+<button id="go">Проверить</button><div id="log"></div>
+<script>
+const log = (t, c) => { const d = document.createElement('div'); d.textContent = t; if (c) d.className = c; document.getElementById('log').append(d); };
+function run(kind, bytes) {
+  return new Promise((done) => {
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/test/ws');
+    ws.binaryType = 'arraybuffer';
+    let got = 0, t0 = 0, sent = 0;
+    const end = (ok) => { clearTimeout(timer); try { ws.close(); } catch (_) {} done({ ok, got, sent, ms: performance.now() - t0 }); };
+    const timer = setTimeout(() => end(false), 15000);
+    ws.onopen = () => {
+      t0 = performance.now();
+      if (kind === 'down') ws.send(JSON.stringify({ down: bytes }));
+      else { const chunk = new Uint8Array(16384); const pump = () => { while (sent < bytes && ws.bufferedAmount < 262144) { ws.send(chunk); sent += chunk.length; } if (sent < bytes) setTimeout(pump, 10); else ws.send(JSON.stringify({ up: sent })); }; pump(); }
+    };
+    ws.onmessage = (e) => {
+      if (typeof e.data === 'string') { const m = JSON.parse(e.data); if (m.upGot >= bytes) { got = m.upGot; end(true); } return; }
+      got += e.data.byteLength; if (got >= bytes) end(true);
+    };
+    ws.onerror = () => end(false);
+  });
+}
+const rate = (r) => (r.got * 8 / Math.max(r.ms, 1) / 1000).toFixed(1) + ' Мбит/с';
+document.getElementById('go').onclick = async () => {
+  document.getElementById('log').textContent = '';
+  log('Сеть: ' + ((navigator.connection && navigator.connection.type) || 'неизвестно'));
+  const d = await run('down', 2 * 1024 * 1024);
+  log(d.ok ? 'Приём: ' + rate(d) : 'Приём оборвался на ' + Math.round(d.got / 1024) + ' КБ из 2048', d.ok ? 'ok' : 'bad');
+  const u = await run('up', 1024 * 1024);
+  log(u.ok ? 'Отправка: ' + rate(u) : 'Отправка оборвалась: сервер получил ' + Math.round(u.got / 1024) + ' КБ из 1024', u.ok ? 'ok' : 'bad');
+  const b = document.createElement('b'); b.textContent = d.ok && u.ok ? 'Канал работает — ретранслятор через Cloudflare подойдёт' : 'Канал режется — через Cloudflare без VPN не выйдет'; b.className = d.ok && u.ok ? 'ok' : 'bad';
+  document.getElementById('log').append(document.createElement('br'), b);
+};
+</script></body></html>`;
+
+function testSocket() {
+  const [client, server] = Object.values(new WebSocketPair());
+  server.accept();
+  let upGot = 0;
+  server.addEventListener('message', (e) => {
+    if (typeof e.data !== 'string') { upGot += e.data.byteLength; return; }
+    const m = JSON.parse(e.data);
+    if (m.down) {
+      const chunk = new Uint8Array(16384);
+      for (let sent = 0; sent < Math.min(m.down, 8 << 20); sent += chunk.length) server.send(chunk);
+    } else if (m.up) server.send(JSON.stringify({ upGot }));
+  });
+  return new Response(null, { status: 101, webSocket: client });
+}
+
 export default {
   async fetch(request, env) {
+    const path = new URL(request.url).pathname;
+    if (path === '/test') return new Response(TEST_PAGE, { headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+    if (path === '/test/ws' && request.headers.get('upgrade') === 'websocket') return testSocket();
+
     const token = env.TELEGRAM_BOT_TOKEN;
     if (!token) return new Response('Не задан секрет TELEGRAM_BOT_TOKEN', { status: 500 });
     const bot = env.BOT_USERNAME || 'StartNewCallBot';
@@ -62,8 +124,8 @@ export default {
     // TURN_KEY_TOKEN; без них страница работает как раньше, только напрямую.
     if (request.method === 'GET' && url.pathname === '/ice') {
       const origin = request.headers.get('origin') || '';
-      const allowed = /^https:\/\/anods\.github\.io$|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-      const headers = { 'content-type': 'application/json', 'access-control-allow-origin': allowed ? origin : 'https://anods.github.io', vary: 'origin', 'cache-control': 'no-store' };
+      const allowed = /^https:\/\/(zvonilka\.timoshkin\.dev|anods\.github\.io)$|^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+      const headers = { 'content-type': 'application/json', 'access-control-allow-origin': allowed ? origin : 'https://zvonilka.timoshkin.dev', vary: 'origin', 'cache-control': 'no-store' };
       let iceServers = [];
       if (allowed && env.TURN_KEY_ID && env.TURN_KEY_TOKEN) {
         const res = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
